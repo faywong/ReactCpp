@@ -1,0 +1,8 @@
+defines = -DNDEBUG -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_HIDE_PATH_EDIT_METHODS -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_DISABLE_TRACING -DSK_USE_PERFETTO
+framework_dirs =
+include_dirs = -I../skia/client_utils/android -I../skia/include/android -I../skia/include/codec -I../skia/include/config -I../skia/include/core -I../skia/include/docs -I../skia/include/effects -I../skia/include/encode -I../skia/include/gpu -I../skia/include/pathops -I../skia/include/ports -I../skia/include/svg -I../skia/include/utils -I../skia/include/utils/mac -I../skia/modules/skottie/include -I../skia/modules/skparagraph/include -I../skia/modules/skshaper/include -I../skia/modules/svg/include -I../skia
+root_out_dir = .
+target_output_name = public
+
+
+build obj/public.stamp: stamp

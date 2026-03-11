@@ -1,0 +1,11 @@
+defines = -DNDEBUG -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_HIDE_PATH_EDIT_METHODS -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_DISABLE_TRACING -DSK_USE_PERFETTO
+framework_dirs =
+include_dirs = -I../skia
+cflags = -Wno-attributes -fPIC -fvisibility=hidden -fstrict-aliasing -O3 -fdata-sections -ffunction-sections -DSK_DISABLE_LEGACY_PNG_WRITEBUFFER
+cflags_cc = -fvisibility-inlines-hidden -std=c++20 -fno-exceptions -fno-rtti
+root_out_dir = .
+target_output_name = fontscanner_tests
+
+build obj/tests/fontscanner_tests.FontScanner.o: cxx ../skia/tests/FontScanner.cpp
+
+build obj/fontscanner_tests.stamp: stamp obj/tests/fontscanner_tests.FontScanner.o || ./libskia.a

@@ -1,0 +1,277 @@
+ninja_required_version = 1.7.2
+
+rule gn
+  command = ../bin/linux64/gn --root=../skia -q --regeneration gen .
+  pool = console
+  description = Regenerating ninja files
+
+build build.ninja: gn
+  generator = 1
+  depfile = build.ninja.d
+
+subninja toolchain.ninja
+
+build android_utils: phony obj/android_utils.stamp
+build avif: phony obj/avif.stamp
+build clipstack_utils: phony obj/clipstack_utils.stamp
+build compile_all_sksl_tests: phony obj/compile_all_sksl_tests.stamp
+build compile_sksl_glsl_nosettings_tests: phony obj/compile_sksl_glsl_nosettings_tests.stamp
+build compile_sksl_glsl_tests: phony obj/compile_sksl_glsl_tests.stamp
+build compile_sksl_hlsl_tests: phony obj/compile_sksl_hlsl_tests.stamp
+build compile_sksl_metal_tests: phony obj/compile_sksl_metal_tests.stamp
+build compile_sksl_skrp_tests: phony obj/compile_sksl_skrp_tests.stamp
+build compile_sksl_spirv_tests: phony obj/compile_sksl_spirv_tests.stamp
+build compile_sksl_wgsl_tests: phony obj/compile_sksl_wgsl_tests.stamp
+build core: phony obj/core.stamp
+build crabbyavif: phony obj/crabbyavif.stamp
+build fontmgr_FontConfigInterface: phony obj/fontmgr_FontConfigInterface.stamp
+build fontmgr_android: phony obj/fontmgr_android.stamp
+build fontmgr_android_ndk: phony obj/fontmgr_android_ndk.stamp
+build fontmgr_android_parser: phony obj/fontmgr_android_parser.stamp
+build fontmgr_custom: phony obj/fontmgr_custom.stamp
+build fontmgr_custom_directory: phony obj/fontmgr_custom_directory.stamp
+build fontmgr_custom_embedded: phony obj/fontmgr_custom_embedded.stamp
+build fontmgr_custom_empty: phony obj/fontmgr_custom_empty.stamp
+build fontmgr_fontations_empty: phony obj/fontmgr_fontations_empty.stamp
+build fontmgr_fontconfig: phony obj/fontmgr_fontconfig.stamp
+build fontmgr_mac_ct: phony obj/fontmgr_mac_ct.stamp
+build fontmgr_win: phony obj/fontmgr_win.stamp
+build fontmgr_win_gdi: phony obj/fontmgr_win_gdi.stamp
+build fontscanner_tests: phony obj/fontscanner_tests.stamp
+build gpu: phony obj/gpu.stamp
+build gpu_shared: phony obj/gpu_shared.stamp
+build graphite: phony obj/graphite.stamp
+build hsw: phony obj/hsw.stamp
+build jpeg_decode: phony obj/jpeg_decode.stamp
+build jpeg_encode: phony obj/jpeg_encode.stamp
+build jpeg_mpf: phony obj/jpeg_mpf.stamp
+build jpegxl_decode: phony obj/jpegxl_decode.stamp
+build lasx: phony obj/lasx.stamp
+build minify_sksl: phony obj/minify_sksl.stamp
+build minify_sksl_tests: phony obj/minify_sksl_tests.stamp
+build modules: phony obj/modules.stamp
+build ndk_images: phony obj/ndk_images.stamp
+build pathops: phony obj/pathops.stamp
+build pdf: phony obj/pdf.stamp
+build pdf_jpeg_helpers: phony obj/pdf_jpeg_helpers.stamp
+build png_decode_common: phony obj/png_decode_common.stamp
+build png_decode_libpng: phony obj/png_decode_libpng.stamp
+build png_decode_rust: phony obj/png_decode_rust.stamp
+build png_encode_common: phony obj/png_encode_common.stamp
+build png_encode_libpng: phony obj/png_encode_libpng.stamp
+build png_encode_rust: phony obj/png_encode_rust.stamp
+build public: phony obj/public.stamp
+build public_headers_warnings_check: phony obj/public_headers_warnings_check.stamp
+build raw: phony obj/raw.stamp
+build run_sksllex: phony obj/run_sksllex.stamp
+build skia: phony ./libskia.a
+build skia.h: phony obj/skia.h.stamp
+build skx: phony obj/skx.stamp
+build typeface_fontations: phony obj/typeface_fontations.stamp
+build typeface_freetype: phony obj/typeface_freetype.stamp
+build typeface_proxy: phony obj/typeface_proxy.stamp
+build vello: phony obj/vello.stamp
+build webp_decode: phony obj/webp_decode.stamp
+build webp_encode: phony obj/webp_encode.stamp
+build wuffs: phony obj/wuffs.stamp
+build xml: phony obj/xml.stamp
+build xps: phony obj/xps.stamp
+build xps_libpng_helpers: phony obj/xps_libpng_helpers.stamp
+build xps_rust_png_helpers: phony obj/xps_rust_png_helpers.stamp
+build bench: phony obj/modules/skparagraph/bench.stamp
+build bentleyottmann: phony ./libbentleyottmann.a
+build expat: phony obj/third_party/expat/expat.stamp
+build fuzz: phony obj/modules/skottie/fuzz.stamp
+build skcms: phony ./libskcms.a
+build skcms_TransformHsw: phony obj/modules/skcms/skcms_TransformHsw.stamp
+build skcms_TransformSkx: phony obj/modules/skcms/skcms_TransformSkx.stamp
+build skottie: phony obj/modules/skottie/skottie.stamp
+build skparagraph: phony obj/modules/skparagraph/skparagraph.stamp
+build skshaper: phony obj/modules/skshaper/skshaper.stamp
+build slides: phony obj/modules/skparagraph/slides.stamp
+build svg: phony obj/modules/svg/svg.stamp
+build $:android_utils: phony obj/android_utils.stamp
+build $:avif: phony obj/avif.stamp
+build $:clipstack_utils: phony obj/clipstack_utils.stamp
+build $:compile_all_sksl_tests: phony obj/compile_all_sksl_tests.stamp
+build $:compile_sksl_glsl_nosettings_tests: phony obj/compile_sksl_glsl_nosettings_tests.stamp
+build $:compile_sksl_glsl_tests: phony obj/compile_sksl_glsl_tests.stamp
+build $:compile_sksl_hlsl_tests: phony obj/compile_sksl_hlsl_tests.stamp
+build $:compile_sksl_metal_tests: phony obj/compile_sksl_metal_tests.stamp
+build $:compile_sksl_skrp_tests: phony obj/compile_sksl_skrp_tests.stamp
+build $:compile_sksl_spirv_tests: phony obj/compile_sksl_spirv_tests.stamp
+build $:compile_sksl_wgsl_tests: phony obj/compile_sksl_wgsl_tests.stamp
+build $:core: phony obj/core.stamp
+build $:crabbyavif: phony obj/crabbyavif.stamp
+build $:fontmgr_FontConfigInterface: phony obj/fontmgr_FontConfigInterface.stamp
+build $:fontmgr_android: phony obj/fontmgr_android.stamp
+build $:fontmgr_android_ndk: phony obj/fontmgr_android_ndk.stamp
+build $:fontmgr_android_parser: phony obj/fontmgr_android_parser.stamp
+build $:fontmgr_custom: phony obj/fontmgr_custom.stamp
+build $:fontmgr_custom_directory: phony obj/fontmgr_custom_directory.stamp
+build $:fontmgr_custom_embedded: phony obj/fontmgr_custom_embedded.stamp
+build $:fontmgr_custom_empty: phony obj/fontmgr_custom_empty.stamp
+build $:fontmgr_fontations_empty: phony obj/fontmgr_fontations_empty.stamp
+build $:fontmgr_fontconfig: phony obj/fontmgr_fontconfig.stamp
+build $:fontmgr_mac_ct: phony obj/fontmgr_mac_ct.stamp
+build $:fontmgr_win: phony obj/fontmgr_win.stamp
+build $:fontmgr_win_gdi: phony obj/fontmgr_win_gdi.stamp
+build $:fontscanner_tests: phony obj/fontscanner_tests.stamp
+build $:gpu: phony obj/gpu.stamp
+build $:gpu_shared: phony obj/gpu_shared.stamp
+build $:graphite: phony obj/graphite.stamp
+build $:hsw: phony obj/hsw.stamp
+build $:jpeg_decode: phony obj/jpeg_decode.stamp
+build $:jpeg_encode: phony obj/jpeg_encode.stamp
+build $:jpeg_mpf: phony obj/jpeg_mpf.stamp
+build $:jpegxl_decode: phony obj/jpegxl_decode.stamp
+build $:lasx: phony obj/lasx.stamp
+build $:minify_sksl: phony obj/minify_sksl.stamp
+build $:minify_sksl_tests: phony obj/minify_sksl_tests.stamp
+build $:modules: phony obj/modules.stamp
+build $:ndk_images: phony obj/ndk_images.stamp
+build $:pathops: phony obj/pathops.stamp
+build $:pdf: phony obj/pdf.stamp
+build $:pdf_jpeg_helpers: phony obj/pdf_jpeg_helpers.stamp
+build $:png_decode_common: phony obj/png_decode_common.stamp
+build $:png_decode_libpng: phony obj/png_decode_libpng.stamp
+build $:png_decode_rust: phony obj/png_decode_rust.stamp
+build $:png_encode_common: phony obj/png_encode_common.stamp
+build $:png_encode_libpng: phony obj/png_encode_libpng.stamp
+build $:png_encode_rust: phony obj/png_encode_rust.stamp
+build $:public: phony obj/public.stamp
+build $:public_headers_warnings_check: phony obj/public_headers_warnings_check.stamp
+build $:raw: phony obj/raw.stamp
+build $:run_sksllex: phony obj/run_sksllex.stamp
+build $:skia: phony ./libskia.a
+build $:skia.h: phony obj/skia.h.stamp
+build $:skx: phony obj/skx.stamp
+build $:typeface_fontations: phony obj/typeface_fontations.stamp
+build $:typeface_freetype: phony obj/typeface_freetype.stamp
+build $:typeface_proxy: phony obj/typeface_proxy.stamp
+build $:vello: phony obj/vello.stamp
+build $:webp_decode: phony obj/webp_decode.stamp
+build $:webp_encode: phony obj/webp_encode.stamp
+build $:wuffs: phony obj/wuffs.stamp
+build $:xml: phony obj/xml.stamp
+build $:xps: phony obj/xps.stamp
+build $:xps_libpng_helpers: phony obj/xps_libpng_helpers.stamp
+build $:xps_rust_png_helpers: phony obj/xps_rust_png_helpers.stamp
+build modules/bentleyottmann$:bentleyottmann: phony ./libbentleyottmann.a
+build modules/bentleyottmann: phony ./libbentleyottmann.a
+build modules/skcms$:skcms: phony ./libskcms.a
+build modules/skcms: phony ./libskcms.a
+build modules/skcms$:skcms_TransformHsw: phony obj/modules/skcms/skcms_TransformHsw.stamp
+build modules/skcms$:skcms_TransformSkx: phony obj/modules/skcms/skcms_TransformSkx.stamp
+build modules/skottie$:fuzz: phony obj/modules/skottie/fuzz.stamp
+build modules/skottie$:gm: phony obj/modules/skottie/gm.stamp
+build modules/skottie$:skottie: phony obj/modules/skottie/skottie.stamp
+build modules/skottie: phony obj/modules/skottie/skottie.stamp
+build modules/skottie$:tests: phony obj/modules/skottie/tests.stamp
+build modules/skottie$:utils: phony obj/modules/skottie/utils.stamp
+build modules/skparagraph$:bench: phony obj/modules/skparagraph/bench.stamp
+build modules/skparagraph$:gm: phony obj/modules/skparagraph/gm.stamp
+build modules/skparagraph$:skparagraph: phony obj/modules/skparagraph/skparagraph.stamp
+build modules/skparagraph: phony obj/modules/skparagraph/skparagraph.stamp
+build modules/skparagraph$:slides: phony obj/modules/skparagraph/slides.stamp
+build modules/skparagraph$:tests: phony obj/modules/skparagraph/tests.stamp
+build modules/skparagraph$:utils: phony obj/modules/skparagraph/utils.stamp
+build modules/skshaper$:skshaper: phony obj/modules/skshaper/skshaper.stamp
+build modules/skshaper: phony obj/modules/skshaper/skshaper.stamp
+build modules/skshaper$:tests: phony obj/modules/skshaper/tests.stamp
+build modules/svg$:svg: phony obj/modules/svg/svg.stamp
+build modules/svg: phony obj/modules/svg/svg.stamp
+build modules/svg$:tests: phony obj/modules/svg/tests.stamp
+build third_party/expat$:expat: phony obj/third_party/expat/expat.stamp
+build third_party/expat: phony obj/third_party/expat/expat.stamp
+
+build all: phony $
+    obj/android_utils.stamp $
+    obj/avif.stamp $
+    obj/clipstack_utils.stamp $
+    obj/compile_all_sksl_tests.stamp $
+    obj/compile_sksl_glsl_nosettings_tests.stamp $
+    obj/compile_sksl_glsl_tests.stamp $
+    obj/compile_sksl_hlsl_tests.stamp $
+    obj/compile_sksl_metal_tests.stamp $
+    obj/compile_sksl_skrp_tests.stamp $
+    obj/compile_sksl_spirv_tests.stamp $
+    obj/compile_sksl_wgsl_tests.stamp $
+    obj/core.stamp $
+    obj/crabbyavif.stamp $
+    obj/fontmgr_FontConfigInterface.stamp $
+    obj/fontmgr_android.stamp $
+    obj/fontmgr_android_ndk.stamp $
+    obj/fontmgr_android_parser.stamp $
+    obj/fontmgr_custom.stamp $
+    obj/fontmgr_custom_directory.stamp $
+    obj/fontmgr_custom_embedded.stamp $
+    obj/fontmgr_custom_empty.stamp $
+    obj/fontmgr_fontations_empty.stamp $
+    obj/fontmgr_fontconfig.stamp $
+    obj/fontmgr_mac_ct.stamp $
+    obj/fontmgr_win.stamp $
+    obj/fontmgr_win_gdi.stamp $
+    obj/fontscanner_tests.stamp $
+    obj/gpu.stamp $
+    obj/gpu_shared.stamp $
+    obj/graphite.stamp $
+    obj/hsw.stamp $
+    obj/jpeg_decode.stamp $
+    obj/jpeg_encode.stamp $
+    obj/jpeg_mpf.stamp $
+    obj/jpegxl_decode.stamp $
+    obj/lasx.stamp $
+    obj/minify_sksl.stamp $
+    obj/minify_sksl_tests.stamp $
+    obj/modules.stamp $
+    obj/ndk_images.stamp $
+    obj/pathops.stamp $
+    obj/pdf.stamp $
+    obj/pdf_jpeg_helpers.stamp $
+    obj/png_decode_common.stamp $
+    obj/png_decode_libpng.stamp $
+    obj/png_decode_rust.stamp $
+    obj/png_encode_common.stamp $
+    obj/png_encode_libpng.stamp $
+    obj/png_encode_rust.stamp $
+    obj/public.stamp $
+    obj/public_headers_warnings_check.stamp $
+    obj/raw.stamp $
+    obj/run_sksllex.stamp $
+    ./libskia.a $
+    obj/skia.h.stamp $
+    obj/skx.stamp $
+    obj/typeface_fontations.stamp $
+    obj/typeface_freetype.stamp $
+    obj/typeface_proxy.stamp $
+    obj/vello.stamp $
+    obj/webp_decode.stamp $
+    obj/webp_encode.stamp $
+    obj/wuffs.stamp $
+    obj/xml.stamp $
+    obj/xps.stamp $
+    obj/xps_libpng_helpers.stamp $
+    obj/xps_rust_png_helpers.stamp $
+    ./libbentleyottmann.a $
+    ./libskcms.a $
+    obj/modules/skcms/skcms_TransformHsw.stamp $
+    obj/modules/skcms/skcms_TransformSkx.stamp $
+    obj/modules/skottie/fuzz.stamp $
+    obj/modules/skottie/gm.stamp $
+    obj/modules/skottie/skottie.stamp $
+    obj/modules/skottie/tests.stamp $
+    obj/modules/skottie/utils.stamp $
+    obj/modules/skparagraph/bench.stamp $
+    obj/modules/skparagraph/gm.stamp $
+    obj/modules/skparagraph/skparagraph.stamp $
+    obj/modules/skparagraph/slides.stamp $
+    obj/modules/skparagraph/tests.stamp $
+    obj/modules/skparagraph/utils.stamp $
+    obj/modules/skshaper/skshaper.stamp $
+    obj/modules/skshaper/tests.stamp $
+    obj/modules/svg/svg.stamp $
+    obj/modules/svg/tests.stamp $
+    obj/third_party/expat/expat.stamp
+
+default all

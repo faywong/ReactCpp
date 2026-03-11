@@ -1,0 +1,11 @@
+defines = -DNDEBUG -DSK_USE_INTERNAL_VULKAN_HEADERS -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_HIDE_PATH_EDIT_METHODS -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_DISABLE_TRACING -DSK_USE_PERFETTO
+framework_dirs =
+include_dirs = -I../skia/include/third_party/vulkan -I../skia -Igen
+cflags = -Wno-attributes -fPIC -fvisibility=hidden -fstrict-aliasing -O3 -fdata-sections -ffunction-sections -DSK_DISABLE_LEGACY_PNG_WRITEBUFFER
+cflags_cc = -fvisibility-inlines-hidden -std=c++20 -fno-exceptions -fno-rtti
+root_out_dir = .
+target_output_name = public_headers_warnings_check
+
+build obj/tools/public_headers_warnings_check.public_headers_warnings_check.o: cxx ../skia/tools/public_headers_warnings_check.cpp || obj/skia.h.stamp
+
+build obj/public_headers_warnings_check.stamp: stamp obj/tools/public_headers_warnings_check.public_headers_warnings_check.o || ./libskia.a obj/skia.h.stamp obj/modules/skottie/skottie.stamp obj/modules/skshaper/skshaper.stamp

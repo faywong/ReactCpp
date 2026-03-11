@@ -1,0 +1,11 @@
+defines = -DNDEBUG -DSK_CODEC_DECODES_BMP -DSK_CODEC_DECODES_WBMP -DSK_HIDE_PATH_EDIT_METHODS -DSK_R32_SHIFT=16 -DSK_ENABLE_PRECOMPILE -DSK_DISABLE_TRACING -DSK_USE_PERFETTO -DSK_GAMMA_APPLY_TO_A8 -DSK_ENABLE_AVX512_OPTS -DSKIA_IMPLEMENTATION=1
+framework_dirs =
+include_dirs = -I../skia
+cflags = -Wno-attributes -fPIC -fvisibility=hidden -fstrict-aliasing -O3 -fdata-sections -ffunction-sections -DSK_DISABLE_LEGACY_PNG_WRITEBUFFER
+cflags_cc = -fvisibility-inlines-hidden -std=c++20 -fno-exceptions -fno-rtti
+root_out_dir = .
+target_output_name = clipstack_utils
+
+build obj/src/utils/clipstack_utils.SkClipStackUtils.o: cxx ../skia/src/utils/SkClipStackUtils.cpp
+
+build obj/clipstack_utils.stamp: stamp obj/src/utils/clipstack_utils.SkClipStackUtils.o || obj/core.stamp obj/pathops.stamp obj/fontmgr_FontConfigInterface.stamp obj/fontmgr_android.stamp obj/fontmgr_android_ndk.stamp obj/fontmgr_custom_directory.stamp obj/fontmgr_custom_embedded.stamp obj/fontmgr_custom_empty.stamp obj/fontmgr_fontations_empty.stamp obj/fontmgr_fontconfig.stamp obj/fontmgr_mac_ct.stamp obj/fontmgr_win.stamp obj/fontmgr_win_gdi.stamp obj/png_decode_libpng.stamp obj/png_encode_libpng.stamp obj/typeface_fontations.stamp
