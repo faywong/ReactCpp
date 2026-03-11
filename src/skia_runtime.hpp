@@ -10,16 +10,62 @@
 #include <variant>
 #include <vector>
 
+#include <cstddef>
+
 class SkCanvas;
 class SkPicture;
 
 using TypeId = const void*;
 
-struct ViewProps {
+struct LayoutRect {
     float x{0.0f};
     float y{0.0f};
-    float width{100.0f};
-    float height{40.0f};
+    float width{0.0f};
+    float height{0.0f};
+
+    bool operator==(const LayoutRect&) const = default;
+};
+
+enum class FlexDirection : std::uint8_t {
+    Row,
+    Column
+};
+
+enum class JustifyContent : std::uint8_t {
+    FlexStart,
+    Center,
+    FlexEnd,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly
+};
+
+enum class AlignItems : std::uint8_t {
+    Stretch,
+    FlexStart,
+    Center,
+    FlexEnd
+};
+
+struct FlexStyle {
+    FlexDirection flex_direction{FlexDirection::Column};
+    JustifyContent justify_content{JustifyContent::FlexStart};
+    AlignItems align_items{AlignItems::Stretch};
+
+    float flex_grow{0.0f};
+    float flex_shrink{0.0f};
+
+    float padding{0.0f};
+    float margin{0.0f};
+
+    std::optional<float> width;
+    std::optional<float> height;
+
+    bool operator==(const FlexStyle&) const = default;
+};
+
+struct ViewProps {
+    FlexStyle style{};
     float bg_r{1.0f};
     float bg_g{1.0f};
     float bg_b{1.0f};
@@ -103,6 +149,10 @@ struct InstanceNode {
     std::vector<HookSlot> hooks;
     bool dirty{true};
     std::shared_ptr<SkPicture> cached_picture;
+
+    LayoutRect layout{};
+
+    std::uintptr_t yoga_node_handle{0};
 
     struct InputState {
         std::string value;

@@ -7,58 +7,62 @@
 #include <stdexcept>
 #include <vector>
 
+#include "yoga_shim.hpp"
+
 #include "core/SkCanvas.h"
 #include "core/SkColor.h"
-#include "core/SkFontMgr.h"
+#include "core/SkFont.h"
+#include "core/SkFontMetrics.h"
 #include "core/SkImageInfo.h"
 #include "core/SkPaint.h"
 #include "core/SkPicture.h"
 #include "core/SkPictureRecorder.h"
 #include "core/SkRect.h"
+#include "core/SkRefCnt.h"
 #include "core/SkSurface.h"
 #include "core/SkTypes.h"
-#include "modules/skparagraph/include/FontCollection.h"
-#include "modules/skparagraph/include/Paragraph.h"
-#include "modules/skparagraph/include/ParagraphBuilder.h"
-#include "modules/skparagraph/include/ParagraphStyle.h"
-#include "modules/skparagraph/include/TextStyle.h"
 
-#if __has_include(<SDL3/SDL.h>)
+#define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
-#define REACTCPP_USE_SDL3 1
-#else
-#include <SDL2/SDL.h>
-#define REACTCPP_USE_SDL3 0
-#endif
+#include <SDL3/SDL_main.h>
 
-#if REACTCPP_USE_SDL3
 #define REACTCPP_SDL_EVENT_QUIT SDL_EVENT_QUIT
 #define REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN SDL_EVENT_MOUSE_BUTTON_DOWN
 #define REACTCPP_SDL_EVENT_TEXT_INPUT SDL_EVENT_TEXT_INPUT
 #define REACTCPP_SDL_EVENT_KEY_DOWN SDL_EVENT_KEY_DOWN
-#else
-#define REACTCPP_SDL_EVENT_QUIT SDL_QUIT
-#define REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN SDL_MOUSEBUTTONDOWN
-#define REACTCPP_SDL_EVENT_TEXT_INPUT SDL_TEXTINPUT
-#define REACTCPP_SDL_EVENT_KEY_DOWN SDL_KEYDOWN
-#endif
 
 thread_local HookDispatcher g_skia_dispatcher;
 
 namespace {
 
-namespace tl = skia::textlayout;
-
 struct DrawContext {
     int surface_width{0};
     int surface_height{0};
-    sk_sp<tl::FontCollection> fonts;
 };
 
-static ViewProps props_as_view(const Element& el) {
-    return std::visit([](const auto& props) {
-        return static_cast<ViewProps>(props);
+static const ViewProps& props_as_view_ref(const Element& el) {
+    return std::visit([](const auto& props) -> const ViewProps& {
+        return static_cast<const ViewProps&>(props);
     }, el.props);
+}
+
+static ViewProps& props_as_view_mut(Element& el) {
+    return std::visit([](auto& props) -> ViewProps& {
+        return static_cast<ViewProps&>(props);
+    }, el.props);
+}
+
+static LayoutRect layout_for_node(const InstanceNode& node) {
+    if (node.layout.width <= 0.0f || node.layout.height <= 0.0f) {
+        const ViewProps& p = props_as_view_ref(node.current_vnode);
+        LayoutRect r;
+        r.x = 0.0f;
+        r.y = 0.0f;
+        r.width = p.style.width.value_or(1.0f);
+        r.height = p.style.height.value_or(1.0f);
+        return r;
+    }
+    return node.layout;
 }
 
 static SkColor make_color(float r, float g, float b, float a = 1.0f) {
@@ -69,23 +73,11 @@ static SkColor make_color(float r, float g, float b, float a = 1.0f) {
     return SkColorSetARGB(to_u8(a), to_u8(r), to_u8(g), to_u8(b));
 }
 
-static std::unique_ptr<tl::Paragraph> build_paragraph(
-    const std::string& text,
-    float text_size,
-    SkColor color,
-    const sk_sp<tl::FontCollection>& fonts
-) {
-    tl::ParagraphStyle paragraph_style;
-    tl::TextStyle text_style;
-    text_style.setFontSize(text_size);
-    text_style.setColor(color);
-    text_style.setFontFamilies({SkString("sans-serif")});
-
-    auto builder = tl::ParagraphBuilder::make(paragraph_style, fonts);
-    builder->pushStyle(text_style);
-    builder->addText(text);
-    builder->pop();
-    return builder->Build();
+static SkScalar baseline_for_centered_text(const SkFont& font, SkScalar box_height) {
+    SkFontMetrics metrics;
+    font.getMetrics(&metrics);
+    const SkScalar text_height = metrics.fDescent - metrics.fAscent;
+    return (box_height - text_height) * 0.5f - metrics.fAscent;
 }
 
 class ElementRenderer {
@@ -98,9 +90,10 @@ class ViewRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext&) const override {
         const auto& props = std::get<ViewProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
         SkPaint fill;
         fill.setColor(make_color(props.bg_r, props.bg_g, props.bg_b, props.bg_a));
-        canvas->drawRect(SkRect::MakeXYWH(0.0f, 0.0f, props.width, props.height), fill);
+        canvas->drawRect(SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height), fill);
     }
 };
 
@@ -108,23 +101,21 @@ class ButtonRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
         const auto& props = std::get<ButtonProps>(node.current_vnode.props);
-        SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, props.width, props.height);
+        const LayoutRect r = layout_for_node(node);
+        SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
 
         SkPaint fill;
         fill.setColor(make_color(props.bg_r, props.bg_g, props.bg_b, props.bg_a));
         canvas->drawRoundRect(bounds, 8.0f, 8.0f, fill);
 
-        auto paragraph = build_paragraph(
-            props.label,
-            props.text_size,
-            make_color(props.text_r, props.text_g, props.text_b),
-            ctx.fonts
-        );
-        paragraph->layout(props.width - 16.0f);
-
         const float text_x = 8.0f;
-        const float text_y = (props.height - paragraph->getHeight()) * 0.5f;
-        paragraph->paint(canvas, text_x, text_y);
+        SkFont font;
+        font.setSize(props.text_size);
+        SkPaint paint;
+        paint.setColor(make_color(props.text_r, props.text_g, props.text_b));
+        const float text_y = baseline_for_centered_text(font, r.height);
+        (void)ctx;
+        canvas->drawString(props.label.c_str(), text_x, text_y, font, paint);
     }
 };
 
@@ -132,17 +123,14 @@ class TextRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
         const auto& props = std::get<TextProps>(node.current_vnode.props);
-        const float layout_width = props.width > 1.0f
-            ? props.width
-            : std::max(1.0f, static_cast<float>(ctx.surface_width));
-        auto paragraph = build_paragraph(
-            props.text,
-            props.text_size,
-            make_color(props.text_r, props.text_g, props.text_b),
-            ctx.fonts
-        );
-        paragraph->layout(layout_width);
-        paragraph->paint(canvas, 0.0f, 0.0f);
+        const LayoutRect r = layout_for_node(node);
+        (void)ctx;
+        SkFont font;
+        font.setSize(props.text_size);
+        SkPaint paint;
+        paint.setColor(make_color(props.text_r, props.text_g, props.text_b));
+        const float text_y = baseline_for_centered_text(font, r.height > 0.0f ? r.height : props.text_size * 1.2f);
+        canvas->drawString(props.text.c_str(), 0.0f, text_y, font, paint);
     }
 };
 
@@ -150,12 +138,13 @@ class InputRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
         const auto& props = std::get<InputProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
 
         const std::string value = node.input_state ? node.input_state->value : props.value;
         const std::size_t cursor = node.input_state ? node.input_state->cursor : value.size();
         const bool focused = node.input_state && node.input_state->focused;
 
-        SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, props.width, props.height);
+        SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
         SkPaint fill;
         fill.setColor(make_color(props.bg_r, props.bg_g, props.bg_b, props.bg_a));
         canvas->drawRoundRect(bounds, 6.0f, 6.0f, fill);
@@ -174,21 +163,22 @@ public:
             ? make_color(0.55f, 0.55f, 0.55f)
             : make_color(props.text_r, props.text_g, props.text_b);
 
-        auto paragraph = build_paragraph(text, props.text_size, text_color, ctx.fonts);
-        paragraph->layout(props.width - 16.0f);
         const float text_x = 8.0f;
-        const float text_y = (props.height - paragraph->getHeight()) * 0.5f;
-        paragraph->paint(canvas, text_x, text_y);
+        SkFont font;
+        font.setSize(props.text_size);
+        SkPaint paint;
+        paint.setColor(text_color);
+        const float text_y = baseline_for_centered_text(font, r.height);
+        (void)ctx;
+        canvas->drawString(text.c_str(), text_x, text_y, font, paint);
 
         if (focused) {
             const std::string left_text = value.substr(0, std::min(cursor, value.size()));
-            auto left_para = build_paragraph(left_text, props.text_size, text_color, ctx.fonts);
-            left_para->layout(props.width - 16.0f);
-            const float cursor_x = text_x + left_para->getMaxIntrinsicWidth();
+            const float cursor_x = text_x + font.measureText(left_text.c_str(), left_text.size(), SkTextEncoding::kUTF8);
             SkPaint caret;
             caret.setColor(make_color(0.2f, 0.2f, 0.2f));
             caret.setStrokeWidth(1.5f);
-            canvas->drawLine(cursor_x, 8.0f, cursor_x, props.height - 8.0f, caret);
+            canvas->drawLine(cursor_x, 8.0f, cursor_x, r.height - 8.0f, caret);
         }
     }
 };
@@ -206,22 +196,175 @@ static const ElementRenderer& renderer_for(TypeId type) {
     return view_renderer;
 }
 
-static SkRect node_bounds(const Element& vnode, int surface_width, int surface_height) {
-    const auto props = props_as_view(vnode);
-    const float w = std::max(props.width, 1.0f);
-    const float h = std::max(props.height, 1.0f);
-    const float x = std::clamp(props.x, -10000.0f, static_cast<float>(surface_width) + 10000.0f);
-    const float y = std::clamp(props.y, -10000.0f, static_cast<float>(surface_height) + 10000.0f);
+static SkRect node_bounds(const LayoutRect& r, int surface_width, int surface_height) {
+    const float w = std::max(r.width, 1.0f);
+    const float h = std::max(r.height, 1.0f);
+    const float x = std::clamp(r.x, -10000.0f, static_cast<float>(surface_width) + 10000.0f);
+    const float y = std::clamp(r.y, -10000.0f, static_cast<float>(surface_height) + 10000.0f);
     return SkRect::MakeXYWH(x, y, w, h);
+}
+
+static YGFlexDirection to_yoga(FlexDirection v) {
+    return v == FlexDirection::Row ? YGFlexDirectionRow : YGFlexDirectionColumn;
+}
+
+static YGJustify to_yoga(JustifyContent v) {
+    switch (v) {
+    case JustifyContent::FlexStart: return YGJustifyFlexStart;
+    case JustifyContent::Center: return YGJustifyCenter;
+    case JustifyContent::FlexEnd: return YGJustifyFlexEnd;
+    case JustifyContent::SpaceBetween: return YGJustifySpaceBetween;
+    case JustifyContent::SpaceAround: return YGJustifySpaceAround;
+    case JustifyContent::SpaceEvenly: return YGJustifySpaceEvenly;
+    }
+    return YGJustifyFlexStart;
+}
+
+static YGAlign to_yoga(AlignItems v) {
+    switch (v) {
+    case AlignItems::Stretch: return YGAlignStretch;
+    case AlignItems::FlexStart: return YGAlignFlexStart;
+    case AlignItems::Center: return YGAlignCenter;
+    case AlignItems::FlexEnd: return YGAlignFlexEnd;
+    }
+    return YGAlignStretch;
+}
+
+static void apply_style(YGNodeRef node, const FlexStyle& style) {
+    YGNodeStyleSetFlexDirection(node, to_yoga(style.flex_direction));
+    YGNodeStyleSetJustifyContent(node, to_yoga(style.justify_content));
+    YGNodeStyleSetAlignItems(node, to_yoga(style.align_items));
+
+    YGNodeStyleSetFlexGrow(node, style.flex_grow);
+    YGNodeStyleSetFlexShrink(node, style.flex_shrink);
+
+    YGNodeStyleSetPadding(node, YGEdgeAll, style.padding);
+    YGNodeStyleSetMargin(node, YGEdgeAll, style.margin);
+
+    if (style.width) {
+        YGNodeStyleSetWidth(node, *style.width);
+    } else {
+        YGNodeStyleSetWidthAuto(node);
+    }
+
+    if (style.height) {
+        YGNodeStyleSetHeight(node, *style.height);
+    } else {
+        YGNodeStyleSetHeightAuto(node);
+    }
+}
+
+static YGSize measure_text_node(
+    YGNodeConstRef yoga_node,
+    float width,
+    YGMeasureMode width_mode,
+    float height,
+    YGMeasureMode height_mode
+) {
+    (void)height;
+    (void)height_mode;
+
+    auto* inst = static_cast<const InstanceNode*>(YGNodeGetContext(yoga_node));
+    if (!inst) {
+        return YGSize{0.0f, 0.0f};
+    }
+
+    float font_size = 16.0f;
+    std::string text;
+    if (inst->type == host_type_text()) {
+        const auto& props = std::get<TextProps>(inst->current_vnode.props);
+        font_size = props.text_size;
+        text = props.text;
+    } else if (inst->type == host_type_button()) {
+        const auto& props = std::get<ButtonProps>(inst->current_vnode.props);
+        font_size = props.text_size;
+        text = props.label;
+    } else if (inst->type == host_type_input()) {
+        const auto& props = std::get<InputProps>(inst->current_vnode.props);
+        font_size = props.text_size;
+        text = props.placeholder;
+    }
+
+    SkFont font;
+    font.setSize(font_size);
+    const float measured = font.measureText(text.c_str(), text.size(), SkTextEncoding::kUTF8);
+    const float padding_x = 16.0f;
+    float out_w = measured + padding_x;
+    if (width_mode == YGMeasureModeExactly) {
+        out_w = width;
+    } else if (width_mode == YGMeasureModeAtMost) {
+        out_w = std::min(out_w, width);
+    }
+
+    const float out_h = font_size * 1.4f;
+    return YGSize{out_w, out_h};
+}
+
+static YGNodeRef ensure_yoga_node(InstanceNode& node) {
+    if (node.yoga_node_handle != 0) {
+        return reinterpret_cast<YGNodeRef>(node.yoga_node_handle);
+    }
+    YGNodeRef yn = YGNodeNew();
+    node.yoga_node_handle = reinterpret_cast<std::uintptr_t>(yn);
+    YGNodeSetContext(yn, &node);
+    return yn;
+}
+
+static void free_yoga_tree(InstanceNode& node) {
+    if (node.yoga_node_handle != 0) {
+        YGNodeRef yn = reinterpret_cast<YGNodeRef>(node.yoga_node_handle);
+        YGNodeFree(yn);
+        node.yoga_node_handle = 0;
+    }
+    for (auto& child : node.children) {
+        free_yoga_tree(*child);
+    }
+}
+
+static void build_yoga_subtree(InstanceNode& node) {
+    YGNodeRef yn = ensure_yoga_node(node);
+    YGNodeRemoveAllChildren(yn);
+
+    const FlexStyle& style = props_as_view_ref(node.current_vnode).style;
+    apply_style(yn, style);
+
+    if (node.type == host_type_text() || node.type == host_type_button() || node.type == host_type_input()) {
+        YGNodeSetMeasureFunc(yn, measure_text_node);
+    } else {
+        YGNodeSetMeasureFunc(yn, nullptr);
+    }
+
+    for (std::size_t i = 0; i < node.children.size(); ++i) {
+        InstanceNode& child = *node.children[i];
+        build_yoga_subtree(child);
+        YGNodeInsertChild(yn, reinterpret_cast<YGNodeRef>(child.yoga_node_handle), static_cast<uint32_t>(i));
+    }
+}
+
+static void apply_layout_results(InstanceNode& node) {
+    if (node.yoga_node_handle == 0) return;
+    YGNodeRef yn = reinterpret_cast<YGNodeRef>(node.yoga_node_handle);
+    LayoutRect next;
+    next.x = YGNodeLayoutGetLeft(yn);
+    next.y = YGNodeLayoutGetTop(yn);
+    next.width = YGNodeLayoutGetWidth(yn);
+    next.height = YGNodeLayoutGetHeight(yn);
+
+    if (!(next == node.layout)) {
+        node.layout = next;
+        node.dirty = true;
+        node.cached_picture.reset();
+    }
+
+    for (auto& child : node.children) {
+        apply_layout_results(*child);
+    }
 }
 
 class SkiaRuntime {
 public:
     explicit SkiaRuntime(AppRenderFunc app)
-        : app_render_(std::move(app)) {
-        font_collection_ = sk_make_sp<tl::FontCollection>();
-        font_collection_->setDefaultFontManager(SkFontMgr::RefDefault());
-    }
+        : app_render_(std::move(app)) {}
 
     Element render_frame() {
         g_skia_dispatcher.current_instance = &root_instance_;
@@ -236,9 +379,14 @@ public:
         DrawContext ctx;
         ctx.surface_width = width;
         ctx.surface_height = height;
-        ctx.fonts = font_collection_;
 
         canvas->clear(SK_ColorWHITE);
+
+        build_yoga_subtree(root_instance_);
+        YGNodeRef root_yoga = reinterpret_cast<YGNodeRef>(root_instance_.yoga_node_handle);
+        YGNodeCalculateLayout(root_yoga, static_cast<float>(width), static_cast<float>(height), YGDirectionLTR);
+        apply_layout_results(root_instance_);
+
         render_cached_node(root_instance_, canvas, ctx);
     }
 
@@ -276,8 +424,8 @@ private:
     }
 
     static bool point_in_bounds(const InstanceNode& node, float x, float y) {
-        const auto p = props_as_view(node.current_vnode);
-        return x >= p.x && x <= (p.x + p.width) && y >= p.y && y <= (p.y + p.height);
+        const LayoutRect r = layout_for_node(node);
+        return x >= r.x && x <= (r.x + r.width) && y >= r.y && y <= (r.y + r.height);
     }
 
     void set_focus(InstanceNode* input_node) {
@@ -411,20 +559,20 @@ private:
     }
 
     static SkRect local_recording_bounds(const Element& vnode) {
-        const auto props = props_as_view(vnode);
-        const float w = std::max(props.width, 1.0f);
-        const float h = std::max(props.height, 1.0f);
+        const auto& props = props_as_view_ref(vnode);
+        const float w = std::max(props.style.width.value_or(1.0f), 1.0f);
+        const float h = std::max(props.style.height.value_or(1.0f), 1.0f);
         return SkRect::MakeXYWH(0.0f, 0.0f, w, h);
     }
 
     void render_cached_node(InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) {
-        const auto p = props_as_view(node.current_vnode);
+        const LayoutRect r = layout_for_node(node);
         canvas->save();
-        canvas->translate(p.x, p.y);
+        canvas->translate(r.x, r.y);
 
         if (node.dirty || !node.cached_picture) {
             SkPictureRecorder recorder;
-            const SkRect bounds = local_recording_bounds(node.current_vnode);
+            const SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, std::max(r.width, 1.0f), std::max(r.height, 1.0f));
             SkCanvas* record_canvas = recorder.beginRecording(bounds);
 
             renderer_for(node.type).on_draw(node, record_canvas, ctx);
@@ -433,7 +581,7 @@ private:
             node.cached_picture = std::shared_ptr<SkPicture>(
                 picture.release(),
                 [](SkPicture* p) {
-                    if (p) p->unref();
+                    SkSafeUnref(p);
                 }
             );
             node.dirty = false;
@@ -450,7 +598,11 @@ private:
     AppRenderFunc app_render_;
     InstanceNode root_instance_{};
     InstanceNode* focused_input_{nullptr};
-    sk_sp<tl::FontCollection> font_collection_;
+
+public:
+    ~SkiaRuntime() {
+        free_yoga_tree(root_instance_);
+    }
 };
 
 }
@@ -511,44 +663,30 @@ void draw_element_tree(const Element& el, SkCanvas* canvas, int width, int heigh
 }
 
 int run_skia_app(const AppRenderFunc& app) {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        throw std::runtime_error("SDL_Init failed");
+    SDL_SetMainReady();
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
     }
 
     const int width = 800;
     const int height = 600;
 
-#if REACTCPP_USE_SDL3
     SDL_Window* window = SDL_CreateWindow(
         "Skia Reactive Demo",
         width,
         height,
         SDL_WINDOW_RESIZABLE
     );
-#else
-    SDL_Window* window = SDL_CreateWindow(
-        "Skia Reactive Demo",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        width,
-        height,
-        SDL_WINDOW_RESIZABLE
-    );
-#endif
     if (!window) {
         SDL_Quit();
-        throw std::runtime_error("SDL_CreateWindow failed");
+        throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
     }
 
-#if REACTCPP_USE_SDL3
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
-#else
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-#endif
     if (!renderer) {
         SDL_DestroyWindow(window);
         SDL_Quit();
-        throw std::runtime_error("SDL_CreateRenderer failed");
+        throw std::runtime_error(std::string("SDL_CreateRenderer failed: ") + SDL_GetError());
     }
 
     SDL_Texture* texture = SDL_CreateTexture(
@@ -562,7 +700,7 @@ int run_skia_app(const AppRenderFunc& app) {
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
-        throw std::runtime_error("SDL_CreateTexture failed");
+        throw std::runtime_error(std::string("SDL_CreateTexture failed: ") + SDL_GetError());
     }
 
     SkImageInfo info = SkImageInfo::Make(
@@ -573,10 +711,10 @@ int run_skia_app(const AppRenderFunc& app) {
     );
 
     std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width) * height);
-    auto surface = SkSurface::MakeRasterDirect(
+    auto surface = SkSurfaces::WrapPixels(
         info,
         pixels.data(),
-        width * 4
+        static_cast<size_t>(width) * 4
     );
     if (!surface) {
         SDL_DestroyTexture(texture);
@@ -588,19 +726,19 @@ int run_skia_app(const AppRenderFunc& app) {
 
     SkiaRuntime runtime(app);
     runtime.render_frame();
-    SDL_StartTextInput();
+    (void)SDL_StartTextInput(window);
 
     bool running = true;
     while (running) {
         SDL_Event e;
-        while (SDL_PollEvent(&e) == 1) {
+        while (SDL_PollEvent(&e)) {
             if (e.type == REACTCPP_SDL_EVENT_QUIT) {
                 running = false;
             } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
                 runtime.handle_mouse_down(static_cast<float>(e.button.x), static_cast<float>(e.button.y));
             } else if (e.type == REACTCPP_SDL_EVENT_TEXT_INPUT) {
                 runtime.handle_text_input(e.text.text);
-            } else if (e.type == REACTCPP_SDL_EVENT_KEY_DOWN && e.key.keysym.sym == SDLK_BACKSPACE) {
+            } else if (e.type == REACTCPP_SDL_EVENT_KEY_DOWN && e.key.key == SDLK_BACKSPACE) {
                 runtime.handle_backspace();
             }
         }
@@ -612,8 +750,8 @@ int run_skia_app(const AppRenderFunc& app) {
 
         void* texPixels = nullptr;
         int pitch = 0;
-        if (SDL_LockTexture(texture, nullptr, &texPixels, &pitch) != 0) {
-            break;
+        if (!SDL_LockTexture(texture, nullptr, &texPixels, &pitch)) {
+            throw std::runtime_error(std::string("SDL_LockTexture failed: ") + SDL_GetError());
         }
 
         for (int y = 0; y < height; ++y) {
@@ -628,11 +766,7 @@ int run_skia_app(const AppRenderFunc& app) {
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
-#if REACTCPP_USE_SDL3
         SDL_RenderTexture(renderer, texture, nullptr, nullptr);
-#else
-        SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-#endif
         SDL_RenderPresent(renderer);
 
         SDL_Delay(16);
@@ -641,7 +775,7 @@ int run_skia_app(const AppRenderFunc& app) {
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-    SDL_StopTextInput();
+    (void)SDL_StopTextInput(window);
     SDL_Quit();
     return 0;
 }

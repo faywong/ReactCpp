@@ -7,12 +7,29 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(FetchContent)
+
 # Skia + SDL3 Demo
 add_executable(react_cpp_sdl_skia_demo
     src/skia_runtime.hpp
     src/skia_runtime.cpp
     src/skia_demo_main.cpp
 )
+
+# Yoga (Flexbox layout)
+FetchContent_Declare(
+    yoga
+    GIT_REPOSITORY https://github.com/facebook/yoga.git
+    GIT_TAG v3.2.1
+    GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(yoga)
+if (NOT yoga_POPULATED)
+    FetchContent_Populate(yoga)
+endif()
+
+# Yoga's root CMakeLists always builds tests; add only the core subdir.
+add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
 
 # SDL discovery: pkg-config first, then CMake package targets
 set(REACTCPP_SDL_FOUND OFF)
@@ -97,27 +114,38 @@ else()
     )
 endif()
 
-# Skia: headers + static library
-set(SKIA_BUNDLE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/skia")
-set(SKIA_HEADERS_ROOT "${SKIA_BUNDLE_ROOT}" CACHE PATH "Path to Skia source tree containing include/ and modules/")
-set(SKIA_LIB_PATH "${SKIA_BUNDLE_ROOT}/libskia.a" CACHE FILEPATH "Path to Skia static library (libskia.a)")
+# Skia: headers + static libraries
+#
+# This repo vendors only the static libs under ./skia/ by default.
+# On this machine, Skia headers live in ../skia-builder/skia/include and Skia sources/modules are in ../skia-builder/skia/.
+# Prefer that external tree automatically when present, but keep everything overrideable via CMake cache variables.
+set(SKIA_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/skia")
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/skia/include/core/SkCanvas.h")
+    set(SKIA_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/skia")
+endif()
+
+set(SKIA_LIB_DIR_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/skia")
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/build/libskia.a")
+    set(SKIA_LIB_DIR_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/build")
+endif()
+
+set(SKIA_ROOT "${SKIA_ROOT_DEFAULT}" CACHE PATH "Path to Skia source tree containing include/ and modules/")
+set(SKIA_LIB_DIR "${SKIA_LIB_DIR_DEFAULT}" CACHE PATH "Path to directory containing Skia static libraries")
+set(SKIA_LIB_PATH "${SKIA_LIB_DIR}/libskia.a" CACHE FILEPATH "Path to Skia static library (libskia.a)")
+set(SKIA_SKCMS_LIB_PATH "${SKIA_LIB_DIR}/libskcms.a" CACHE FILEPATH "Path to skcms static library (libskcms.a), if present")
 
 if (NOT EXISTS "${SKIA_LIB_PATH}")
     message(FATAL_ERROR "Skia static library not found at ${SKIA_LIB_PATH}")
 endif()
 
-if (NOT EXISTS "${SKIA_HEADERS_ROOT}/include/core/SkCanvas.h")
-    message(FATAL_ERROR "Skia headers not found: expected ${SKIA_HEADERS_ROOT}/include/core/SkCanvas.h")
-endif()
-
-if (NOT EXISTS "${SKIA_HEADERS_ROOT}/modules/skparagraph/include/Paragraph.h")
-    message(FATAL_ERROR "SkParagraph headers not found: expected ${SKIA_HEADERS_ROOT}/modules/skparagraph/include/Paragraph.h")
+if (NOT EXISTS "${SKIA_ROOT}/include/core/SkCanvas.h")
+    message(FATAL_ERROR "Skia headers not found: expected ${SKIA_ROOT}/include/core/SkCanvas.h")
 endif()
 
 target_include_directories(react_cpp_sdl_skia_demo
     PRIVATE
-        "${SKIA_HEADERS_ROOT}/include"  # for core/SkCanvas.h
-        "${SKIA_HEADERS_ROOT}"          # for modules/skparagraph/...
+        "${SKIA_ROOT}/include"  # for core/SkCanvas.h
+        "${SKIA_ROOT}"
 )
 
 target_link_libraries(react_cpp_sdl_skia_demo
@@ -126,10 +154,10 @@ target_link_libraries(react_cpp_sdl_skia_demo
 )
 
 # Some Skia builds require skcms as a separate static lib.
-if (EXISTS "${SKIA_BUNDLE_ROOT}/libskcms.a")
+if (EXISTS "${SKIA_SKCMS_LIB_PATH}")
     target_link_libraries(react_cpp_sdl_skia_demo
         PRIVATE
-            "${SKIA_BUNDLE_ROOT}/libskcms.a"
+            "${SKIA_SKCMS_LIB_PATH}"
     )
 endif()
 
@@ -138,4 +166,5 @@ find_package(Threads REQUIRED)
 target_link_libraries(react_cpp_sdl_skia_demo
     PRIVATE
         Threads::Threads
+        yogacore
 )
