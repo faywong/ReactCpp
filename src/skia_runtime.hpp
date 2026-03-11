@@ -4,31 +4,86 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <variant>
 #include <vector>
 
 class SkCanvas;
+class SkPicture;
 
 using TypeId = const void*;
 
-struct Props {
-    float r{0.2f};
-    float g{0.6f};
-    float b{0.9f};
+struct ViewProps {
+    float x{0.0f};
+    float y{0.0f};
+    float width{100.0f};
+    float height{40.0f};
+    float bg_r{1.0f};
+    float bg_g{1.0f};
+    float bg_b{1.0f};
+    float bg_a{1.0f};
+
+    bool operator==(const ViewProps&) const = default;
 };
+
+struct ButtonProps : ViewProps {
+    std::string label;
+    float text_size{18.0f};
+    float text_r{0.1f};
+    float text_g{0.1f};
+    float text_b{0.1f};
+
+    bool operator==(const ButtonProps&) const = default;
+};
+
+struct TextProps : ViewProps {
+    std::string text;
+    float text_size{18.0f};
+    float text_r{0.15f};
+    float text_g{0.15f};
+    float text_b{0.15f};
+
+    bool operator==(const TextProps&) const = default;
+};
+
+struct InputProps : ViewProps {
+    std::string value;
+    std::string placeholder;
+    float text_size{18.0f};
+    float text_r{0.1f};
+    float text_g{0.1f};
+    float text_b{0.1f};
+    float border_r{0.7f};
+    float border_g{0.7f};
+    float border_b{0.7f};
+
+    bool operator==(const InputProps&) const = default;
+};
+
+using ElementProps = std::variant<ViewProps, ButtonProps, TextProps, InputProps>;
 
 struct Element {
     TypeId type{};
-    Props props;
+    ElementProps props{ViewProps{}};
     std::vector<Element> children;
+    bool dirty{false};
+
+    bool operator==(const Element& other) const {
+        return type == other.type && props == other.props && children == other.children;
+    }
 };
 
 TypeId host_type_view();
-TypeId host_type_rect();
+TypeId host_type_button();
+TypeId host_type_text();
+TypeId host_type_input();
 
-Element View(const std::vector<Element>& children);
-Element Rect(float r, float g, float b);
+Element View(const ViewProps& props, std::vector<Element> children = {});
+Element Button(const ButtonProps& props);
+Element Text(const TextProps& props);
+Element Input(const InputProps& props);
 
 enum class HookKind : std::uint8_t {
     State
@@ -43,7 +98,18 @@ struct HookSlot {
 struct InstanceNode {
     TypeId type{};
     Element current_vnode{};
+    InstanceNode* parent{nullptr};
+    std::vector<std::unique_ptr<InstanceNode>> children;
     std::vector<HookSlot> hooks;
+    bool dirty{true};
+    std::shared_ptr<SkPicture> cached_picture;
+
+    struct InputState {
+        std::string value;
+        std::size_t cursor{0};
+        bool focused{false};
+    };
+    std::optional<InputState> input_state;
 };
 
 struct HookDispatcher {
