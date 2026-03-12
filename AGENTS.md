@@ -1,9 +1,9 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-03-11
+**Generated:** 2026-03-12
 
 ## OVERVIEW
-Small experimental repo for a native reactive GUI framework PoC built in C++20, with Skia (CPU, static lib in ./skia) and SDL3 planned as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
+Small experimental repo for a native reactive GUI framework PoC built in C++20, with Skia (CPU raster) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
 
 ## DESIGN GOALS & CONSTRAINTS
 - **Developer experience first**
@@ -18,31 +18,41 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 - **Windowing & IO**
   - SDL3 for window management and event handling (already installed on host).
 - **Rendering backend**
-  - Prebuilt Skia static library under `./skia` (CPU raster-only configuration; no GL/Vulkan in current args.gn).
+  - Skia is provided by an external **skia-builder** checkout (see `SKIA_BUILDER_ROOT` in `CMakeLists.txt`).
+  - This repo does **not** vendor Skia libs/headers under `./skia/` anymore.
 
 ## CURRENT STRUCTURE
 ```text
 ./
-├── CMakeLists.txt        # Single-target CMake config for console PoC
+├── CMakeLists.txt        # Builds SDL3 + Skia demo; pulls Yoga via FetchContent
+├── README.md             # Build prerequisites (skia-builder) + build/run commands
 ├── build/                # CMake build artifacts (generated)
-├── skia/                 # Prebuilt Skia static libs + ninja files
-│   ├── libskia.a
-│   ├── libskcms.a
-│   ├── args.gn           # Skia build configuration (CPU, no GL, no fonts, etc.)
-│   └── obj/              # Object files for Skia build (do not edit)
 └── src/
-    ├── main.cpp          # Console PoC entry (Virtual/Instance tree, no graphics yet)
-    ├── runtime.hpp       # Minimal Element + InstanceNode + use_state skeleton
-    └── runtime.cpp       # Simple reconciler and console renderer
+    ├── main.cpp          # SDL3 + Skia demo entry (uses skia_runtime)
+    ├── skia_runtime.hpp  # Public UI API (Elements/Props/Hooks) + run_skia_app()
+    ├── skia_runtime.cpp  # SDL3 event loop + Skia CPU raster rendering + Yoga layout
+    ├── yoga_shim.hpp     # Yoga header shim for <yoga/Yoga.h> vs <Yoga.h>
+    ├── runtime.hpp       # Legacy console PoC runtime (kept for reference)
+    └── runtime.cpp       # Legacy console PoC reconciler/renderer
+
+(External dependency - not part of this repo)
+../skia-builder/
+├── build/                # libskia.a, libskcms.a (built by ./build.sh)
+└── skia/                 # Skia headers (skia/include/...) and Skia source tree
 ```
 
 ## WHERE TO LOOK (TODAY)
 | Task                                    | Location          | Notes |
 |----------------------------------------|-------------------|-------|
-| Project build entry                     | `CMakeLists.txt`  | Currently only builds `react_cpp_demo` console executable. |
-| Core reactive runtime skeleton          | `src/runtime.*`   | Contains Element, InstanceNode, and a basic use_state implementation. |
-| Current demo behavior (console render)  | `src/main.cpp`    | Prints a simple tree; currently not using GUI or Skia. |
-| Skia static libraries & build metadata  | `skia/`           | `libskia.a`, `libskcms.a`, ninja/args.gn from Skia's build. |
+| Project build entry                     | `CMakeLists.txt`  | Builds `react_cpp_sdl_skia_demo`. Skia comes from `SKIA_BUILDER_ROOT` (external). |
+| Current demo entry                      | `src/main.cpp`    | Creates a simple element tree and calls `run_skia_app()`. |
+| SDL3 + Skia + Yoga runtime              | `src/skia_runtime.*` | SDL3 event loop + Skia rendering + Yoga flexbox layout. |
+| Legacy console reconciler               | `src/runtime.*`   | Older PoC kept for reference; not used by the SDL/Skia demo. |
+| Skia headers + static libs              | `../skia-builder/` | External checkout. Build with `./build.sh`, then pass `-DSKIA_BUILDER_ROOT=...`. |
+
+### Skia dependency (external)
+
+Skia comes from [fonttools/skia-builder](https://github.com/fonttools/skia-builder): clone repo, run `git submodule update --init --recursive`, then run `./build.sh`.
 
 ## ROADMAP: FROM PoC TO MINIMAL REACTIVE GUI
 
@@ -55,11 +65,10 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
      - Diff by `(type, key)` where keys exist; position-based otherwise.
      - Maintain minimal Instance reuse and subtree replacement.
 
-2. **Introduce Skia Rendering**
-   - Add a second executable (e.g., `react_cpp_sdl_skia_demo`) that:
+2. **Introduce Skia Rendering (Done)**
+   - `react_cpp_sdl_skia_demo`:
      - Uses SDL3 for window and event loop.
-     - Creates a CPU raster `SkSurface` (`SkSurface::MakeRasterN32Premul` or `MakeRasterDirect`).
-     - Renders the Element tree to a `SkCanvas` each frame (simple shapes first).
+     - Uses a CPU raster `SkSurface` and renders the Element tree each frame.
 
 3. **Add SkPicture-Based Caching**
    - For each widget/node, maintain a `sk_sp<SkPicture>` cache:
@@ -74,10 +83,9 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
    - Allow components to register handlers (e.g., `onClick`) that call `setState`.
    - Batch state updates per frame to avoid redundant diffs/renders.
 
-5. **Yoga Layout (Future Step)**
-   - Introduce Yoga nodes bound to InstanceNodes for Flexbox layout.
-   - Map style props (e.g., `flexDirection`, `padding`, `width`, `height`) to Yoga.
-   - Only mark nodes as layout-dirty when style or constraints change; layout-dirty drives SkPicture invalidation.
+5. **Yoga Layout (In Progress / Prototype)**
+   - Yoga nodes are bound to InstanceNodes for Flexbox layout.
+   - Layout results are stored on `InstanceNode::layout` and used for rendering and hit testing.
 
 6. **Evaluate Zig Surface (Optional)**
    - When C++ templates/type-erasure for hooks and high-concurrency become too awkward, prototype a Zig runtime:
@@ -119,7 +127,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 ## CONVENTIONS
 - **Directory usage**
   - `src/` is for framework/runtime and demos.
-  - `skia/` is treated as a vendor/prebuilt third-party dependency; do not modify its contents by hand.
+  - Skia is provided by an external `skia-builder` checkout (see `SKIA_BUILDER_ROOT`). Treat it as read-only for this repo.
 - **Build system**
   - CMake is the single source of truth for builds.
   - Additional executables (e.g., Skia/SDL demo, future Zig prototypes) should be declared in the root CMakeLists.
@@ -132,7 +140,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 - Leaking Skia/SDL/Yoga types into public component APIs.
 - Implementing hooks without strict ordering & generation checks (invites subtle bugs).
 - Overgeneralizing types too early (complex template hierarchies that obscure intent).
-- Treating `skia/` as editable source; it is prebuilt and should remain read-only.
+- Treating the external `skia-builder` checkout as editable app code; it is a dependency.
 
 ## NEXT STEPS FOR CONTRIBUTORS
 - Implement a second executable with SDL3 + Skia integration that uses the existing runtime skeleton.
