@@ -13,6 +13,8 @@
 #include "core/SkColor.h"
 #include "core/SkFont.h"
 #include "core/SkFontMetrics.h"
+#include "core/SkFontMgr.h"
+#include "core/SkFontStyle.h"
 #include "core/SkImageInfo.h"
 #include "core/SkPaint.h"
 #include "core/SkPicture.h"
@@ -21,6 +23,10 @@
 #include "core/SkRefCnt.h"
 #include "core/SkSurface.h"
 #include "core/SkTypes.h"
+#include "core/SkTypeface.h"
+
+#include "ports/SkFontMgr_fontconfig.h"
+#include "ports/SkFontScanner_FreeType.h"
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -38,7 +44,19 @@ namespace {
 struct DrawContext {
     int surface_width{0};
     int surface_height{0};
+    sk_sp<SkFontMgr> font_mgr;
 };
+
+thread_local sk_sp<SkFontMgr> g_font_mgr;
+
+static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>& mgr) {
+    if (!mgr) return nullptr;
+    sk_sp<SkTypeface> tf = mgr->matchFamilyStyle(nullptr, SkFontStyle::Normal());
+    if (tf) return tf;
+    tf = mgr->matchFamilyStyle("Noto Sans", SkFontStyle::Normal());
+    if (tf) return tf;
+    return mgr->matchFamilyStyle("DejaVu Sans", SkFontStyle::Normal());
+}
 
 static const ViewProps& props_as_view_ref(const Element& el) {
     return std::visit([](const auto& props) -> const ViewProps& {
@@ -111,6 +129,7 @@ public:
         const float text_x = 8.0f;
         SkFont font;
         font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
         SkPaint paint;
         paint.setColor(make_color(props.text_r, props.text_g, props.text_b));
         const float text_y = baseline_for_centered_text(font, r.height);
@@ -127,6 +146,7 @@ public:
         (void)ctx;
         SkFont font;
         font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
         SkPaint paint;
         paint.setColor(make_color(props.text_r, props.text_g, props.text_b));
         const float text_y = baseline_for_centered_text(font, r.height > 0.0f ? r.height : props.text_size * 1.2f);
@@ -166,6 +186,7 @@ public:
         const float text_x = 8.0f;
         SkFont font;
         font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
         SkPaint paint;
         paint.setColor(text_color);
         const float text_y = baseline_for_centered_text(font, r.height);
@@ -287,6 +308,7 @@ static YGSize measure_text_node(
 
     SkFont font;
     font.setSize(font_size);
+    font.setTypeface(pick_typeface(g_font_mgr));
     const float measured = font.measureText(text.c_str(), text.size(), SkTextEncoding::kUTF8);
     const float padding_x = 16.0f;
     float out_w = measured + padding_x;
@@ -364,7 +386,9 @@ static void apply_layout_results(InstanceNode& node) {
 class SkiaRuntime {
 public:
     explicit SkiaRuntime(AppRenderFunc app)
-        : app_render_(std::move(app)) {}
+        : app_render_(std::move(app)) {
+        font_mgr_ = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
+    }
 
     Element render_frame() {
         g_skia_dispatcher.current_instance = &root_instance_;
@@ -379,6 +403,8 @@ public:
         DrawContext ctx;
         ctx.surface_width = width;
         ctx.surface_height = height;
+        ctx.font_mgr = font_mgr_;
+        g_font_mgr = font_mgr_;
 
         canvas->clear(SK_ColorWHITE);
 
@@ -598,6 +624,7 @@ private:
     AppRenderFunc app_render_;
     InstanceNode root_instance_{};
     InstanceNode* focused_input_{nullptr};
+    sk_sp<SkFontMgr> font_mgr_;
 
 public:
     ~SkiaRuntime() {

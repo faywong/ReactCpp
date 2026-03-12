@@ -13,7 +13,7 @@ include(FetchContent)
 add_executable(react_cpp_sdl_skia_demo
     src/skia_runtime.hpp
     src/skia_runtime.cpp
-    src/skia_demo_main.cpp
+    src/main.cpp
 )
 
 # Yoga (Flexbox layout)
@@ -115,22 +115,15 @@ else()
 endif()
 
 # Skia: headers + static libraries
-#
-# This repo vendors only the static libs under ./skia/ by default.
-# On this machine, Skia headers live in ../skia-builder/skia/include and Skia sources/modules are in ../skia-builder/skia/.
-# Prefer that external tree automatically when present, but keep everything overrideable via CMake cache variables.
-set(SKIA_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/skia")
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/skia/include/core/SkCanvas.h")
-    set(SKIA_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/skia")
+set(SKIA_BUILDER_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder")
+set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Path to skia-builder directory")
+
+if (NOT EXISTS "${SKIA_BUILDER_ROOT}")
+    message(FATAL_ERROR "skia-builder 目录不存在，请 clone https://github.com/fonttools/skia-builder/ 项目运行其中的 build.sh 编译通过，之后为 cmake 命令行指定 -DSKIA_BUILDER_ROOT=/path/to/your/skia-builder")
 endif()
 
-set(SKIA_LIB_DIR_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/skia")
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/build/libskia.a")
-    set(SKIA_LIB_DIR_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder/build")
-endif()
-
-set(SKIA_ROOT "${SKIA_ROOT_DEFAULT}" CACHE PATH "Path to Skia source tree containing include/ and modules/")
-set(SKIA_LIB_DIR "${SKIA_LIB_DIR_DEFAULT}" CACHE PATH "Path to directory containing Skia static libraries")
+set(SKIA_ROOT "${SKIA_BUILDER_ROOT}/skia")
+set(SKIA_LIB_DIR "${SKIA_BUILDER_ROOT}/build")
 set(SKIA_LIB_PATH "${SKIA_LIB_DIR}/libskia.a" CACHE FILEPATH "Path to Skia static library (libskia.a)")
 set(SKIA_SKCMS_LIB_PATH "${SKIA_LIB_DIR}/libskcms.a" CACHE FILEPATH "Path to skcms static library (libskcms.a), if present")
 
@@ -162,6 +155,44 @@ if (EXISTS "${SKIA_SKCMS_LIB_PATH}")
 endif()
 
 find_package(Threads REQUIRED)
+
+# Font dependencies for Skia text rendering (Linux)
+# If Skia was built with freetype/fontconfig/harfbuzz enabled, the final link
+# step must include these system libraries.
+if (PkgConfig_FOUND)
+    pkg_check_modules(FREETYPE2 QUIET freetype2)
+    pkg_check_modules(FONTCONFIG QUIET fontconfig)
+    pkg_check_modules(HARFBUZZ QUIET harfbuzz)
+
+    if (FREETYPE2_FOUND AND FONTCONFIG_FOUND AND HARFBUZZ_FOUND)
+        target_include_directories(react_cpp_sdl_skia_demo
+            PRIVATE
+                ${FREETYPE2_INCLUDE_DIRS}
+                ${FONTCONFIG_INCLUDE_DIRS}
+                ${HARFBUZZ_INCLUDE_DIRS}
+        )
+
+        target_compile_options(react_cpp_sdl_skia_demo
+            PRIVATE
+                ${FREETYPE2_CFLAGS_OTHER}
+                ${FONTCONFIG_CFLAGS_OTHER}
+                ${HARFBUZZ_CFLAGS_OTHER}
+        )
+
+        # NOTE: link order matters for static libs: dependents first, dependencies after.
+        # fontconfig can depend on freetype, so keep fontconfig before freetype.
+        target_link_libraries(react_cpp_sdl_skia_demo
+            PRIVATE
+                ${FONTCONFIG_LIBRARIES}
+                ${FREETYPE2_LIBRARIES}
+                ${HARFBUZZ_LIBRARIES}
+                m
+                dl
+        )
+    else()
+        message(WARNING "pkg-config did not find all Skia font deps (freetype2/fontconfig/harfbuzz). If your Skia build has text enabled, linking may fail.")
+    endif()
+endif()
 
 target_link_libraries(react_cpp_sdl_skia_demo
     PRIVATE
