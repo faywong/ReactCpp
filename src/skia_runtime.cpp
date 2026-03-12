@@ -509,7 +509,11 @@ private:
     static std::shared_ptr<const std::function<void()>> click_handler_for(const ElementProps& props) {
         return std::visit([](const auto& p) -> std::shared_ptr<const std::function<void()>> {
             using P = std::decay_t<decltype(p)>;
-            return p.on_click;
+            if constexpr (std::is_same_v<P, ButtonProps>) {
+                return p.on_click;
+            } else {
+                return nullptr;
+            }
         }, props);
     }
 
@@ -526,7 +530,7 @@ private:
 
     InstanceNode* hit_test_at(InstanceNode& node, float x, float y) {
         const LayoutRect self = layout_for_node(node);
-        if (!point_in_rect(self, x, y)) {
+        if (x < 0.0f || y < 0.0f || x > self.width || y > self.height) {
             return nullptr;
         }
 
@@ -606,12 +610,15 @@ private:
         bool local_changed = false;
 
         if (inst.type != vnode.type) {
+            const TypeId old_type = inst.type;
             if (focused_input_ && is_descendant_or_self(focused_input_, &inst)) {
                 focused_input_ = nullptr;
             }
             inst.type = vnode.type;
             inst.current_vnode = vnode;
-            inst.hooks.clear();
+            if (old_type != nullptr) {
+                inst.hooks.clear();
+            }
             inst.children.clear();
             inst.cached_picture.reset();
             inst.dirty = true;
@@ -686,6 +693,10 @@ private:
 
 public:
     ~SkiaRuntime() {
+        if (g_skia_dispatcher.request_update_ctx == this) {
+            g_skia_dispatcher.request_update = nullptr;
+            g_skia_dispatcher.request_update_ctx = nullptr;
+        }
         free_yoga_tree(root_instance_);
     }
 };
