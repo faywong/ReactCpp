@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 #include "yoga_shim.hpp"
@@ -22,7 +23,6 @@
 #include "core/SkRect.h"
 #include "core/SkRefCnt.h"
 #include "core/SkSurface.h"
-#include "core/SkTypes.h"
 #include "core/SkTypeface.h"
 
 #include "ports/SkFontMgr_fontconfig.h"
@@ -388,6 +388,9 @@ public:
     explicit SkiaRuntime(AppRenderFunc app)
         : app_render_(std::move(app)) {
         font_mgr_ = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
+
+        g_skia_dispatcher.request_update = &SkiaRuntime::request_update_trampoline;
+        g_skia_dispatcher.request_update_ctx = this;
     }
 
     Element render_frame() {
@@ -396,7 +399,14 @@ public:
 
         Element new_root = app_render_();
         reconcile(root_instance_, new_root);
+        g_skia_dispatcher.current_instance = nullptr;
         return root_instance_.current_vnode;
+    }
+
+    void perform_update_if_needed() {
+        if (!update_requested_) return;
+        update_requested_ = false;
+        (void)render_frame();
     }
 
     void draw(SkCanvas* canvas, int width, int height) {
@@ -417,8 +427,10 @@ public:
     }
 
     void handle_mouse_down(float x, float y) {
-        InstanceNode* hit = find_input_at(root_instance_, x, y);
-        set_focus(hit);
+        InstanceNode* hit = hit_test_at(root_instance_, x, y);
+        InstanceNode* hit_input = find_ancestor_by_type(hit, host_type_input());
+        set_focus(hit_input);
+        (void)dispatch_click_bubble(hit);
     }
 
     void handle_text_input(const char* text) {
@@ -428,6 +440,7 @@ public:
         state.value.insert(state.cursor, inserted);
         state.cursor += inserted.size();
         mark_dirty(focused_input_);
+        request_update();
     }
 
     void handle_backspace() {
@@ -437,9 +450,19 @@ public:
         state.value.erase(state.cursor - 1, 1);
         state.cursor -= 1;
         mark_dirty(focused_input_);
+        request_update();
     }
 
 private:
+    static void request_update_trampoline(void* ctx) {
+        if (!ctx) return;
+        static_cast<SkiaRuntime*>(ctx)->request_update();
+    }
+
+    void request_update() {
+        update_requested_ = true;
+    }
+
     static bool is_descendant_or_self(const InstanceNode* node, const InstanceNode* possible_ancestor) {
         for (auto* current = node; current != nullptr; current = current->parent) {
             if (current == possible_ancestor) {
@@ -447,11 +470,6 @@ private:
             }
         }
         return false;
-    }
-
-    static bool point_in_bounds(const InstanceNode& node, float x, float y) {
-        const LayoutRect r = layout_for_node(node);
-        return x >= r.x && x <= (r.x + r.width) && y >= r.y && y <= (r.y + r.height);
     }
 
     void set_focus(InstanceNode* input_node) {
@@ -475,17 +493,56 @@ private:
         }
     }
 
-    InstanceNode* find_input_at(InstanceNode& node, float x, float y) {
-        for (auto it = node.children.rbegin(); it != node.children.rend(); ++it) {
-            if (InstanceNode* found = find_input_at(*it->get(), x, y)) {
-                return found;
+    static bool point_in_rect(const LayoutRect& r, float x, float y) {
+        return x >= r.x && x <= (r.x + r.width) && y >= r.y && y <= (r.y + r.height);
+    }
+
+    static InstanceNode* find_ancestor_by_type(InstanceNode* node, TypeId type) {
+        for (auto* current = node; current != nullptr; current = current->parent) {
+            if (current->type == type) {
+                return current;
             }
         }
-
-        if (node.type == host_type_input() && point_in_bounds(node, x, y)) {
-            return &node;
-        }
         return nullptr;
+    }
+
+    static std::shared_ptr<const std::function<void()>> click_handler_for(const ElementProps& props) {
+        return std::visit([](const auto& p) -> std::shared_ptr<const std::function<void()>> {
+            using P = std::decay_t<decltype(p)>;
+            return p.on_click;
+        }, props);
+    }
+
+    static bool dispatch_click_bubble(InstanceNode* target) {
+        for (auto* current = target; current != nullptr; current = current->parent) {
+            auto handler = click_handler_for(current->current_vnode.props);
+            if (handler) {
+                (*handler)();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    InstanceNode* hit_test_at(InstanceNode& node, float x, float y) {
+        const LayoutRect self = layout_for_node(node);
+        if (!point_in_rect(self, x, y)) {
+            return nullptr;
+        }
+
+        for (auto it = node.children.rbegin(); it != node.children.rend(); ++it) {
+            InstanceNode& child = *it->get();
+            const LayoutRect r = layout_for_node(child);
+            if (!point_in_rect(r, x, y)) {
+                continue;
+            }
+            if (InstanceNode* found = hit_test_at(child, x - r.x, y - r.y)) {
+                return found;
+            }
+            return &child;
+        }
+
+        return &node;
     }
 
     void mark_dirty(InstanceNode* node) {
@@ -625,6 +682,7 @@ private:
     InstanceNode root_instance_{};
     InstanceNode* focused_input_{nullptr};
     sk_sp<SkFontMgr> font_mgr_;
+    bool update_requested_{true};
 
 public:
     ~SkiaRuntime() {
@@ -752,7 +810,7 @@ int run_skia_app(const AppRenderFunc& app) {
     }
 
     SkiaRuntime runtime(app);
-    runtime.render_frame();
+    runtime.perform_update_if_needed();
     (void)SDL_StartTextInput(window);
 
     bool running = true;
@@ -770,7 +828,7 @@ int run_skia_app(const AppRenderFunc& app) {
             }
         }
 
-        runtime.render_frame();
+        runtime.perform_update_if_needed();
 
         SkCanvas* canvas = surface->getCanvas();
         runtime.draw(canvas, width, height);

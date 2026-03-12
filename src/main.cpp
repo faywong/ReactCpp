@@ -1,6 +1,11 @@
 #include "skia_runtime.hpp"
 
+#include <memory>
+#include <string>
+
 Element AppRoot() {
+    auto counter = use_state<int>(0);
+
     ViewProps root_props;
     root_props.style.flex_direction = FlexDirection::Column;
     root_props.style.justify_content = JustifyContent::FlexStart;
@@ -12,7 +17,7 @@ Element AppRoot() {
 
     TextProps title;
     title.style.margin = 6.0f;
-    title.text = "Skia Reactive UI Runtime";
+    title.text = std::string("Skia Reactive UI Runtime: ") + std::to_string(counter.get());
     title.text_size = 30.0f;
     title.text_r = 0.12f;
     title.text_g = 0.15f;
@@ -30,6 +35,9 @@ Element AppRoot() {
     button.text_r = 1.0f;
     button.text_g = 1.0f;
     button.text_b = 1.0f;
+    button.on_click = std::make_shared<std::function<void()>>([counter]() {
+        counter.set(counter.get() + 1);
+    });
 
     TextProps label;
     label.style.margin = 6.0f;

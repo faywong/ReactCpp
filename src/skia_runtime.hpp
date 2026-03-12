@@ -70,8 +70,15 @@ struct ViewProps {
     float bg_g{1.0f};
     float bg_b{1.0f};
     float bg_a{1.0f};
+    std::shared_ptr<const std::function<void()>> on_click;
 
-    bool operator==(const ViewProps&) const = default;
+    bool operator==(const ViewProps& other) const {
+        return style == other.style
+            && bg_r == other.bg_r
+            && bg_g == other.bg_g
+            && bg_b == other.bg_b
+            && bg_a == other.bg_a;
+    }
 };
 
 struct ButtonProps : ViewProps {
@@ -81,7 +88,14 @@ struct ButtonProps : ViewProps {
     float text_g{0.1f};
     float text_b{0.1f};
 
-    bool operator==(const ButtonProps&) const = default;
+    bool operator==(const ButtonProps& other) const {
+        return static_cast<const ViewProps&>(*this) == static_cast<const ViewProps&>(other)
+            && label == other.label
+            && text_size == other.text_size
+            && text_r == other.text_r
+            && text_g == other.text_g
+            && text_b == other.text_b;
+    }
 };
 
 struct TextProps : ViewProps {
@@ -165,23 +179,59 @@ struct InstanceNode {
 struct HookDispatcher {
     InstanceNode* current_instance{nullptr};
     std::uint32_t current_index{0};
+
+    void (*request_update)(void* ctx){nullptr};
+    void* request_update_ctx{nullptr};
 };
 
 extern thread_local HookDispatcher g_skia_dispatcher;
 
 template <typename T>
 struct StateHandle {
-    const T& get() const { return *value_ptr; }
+    const T& get() const {
+        if (!instance) {
+            throw std::runtime_error("StateHandle::get called on null instance");
+        }
+        if (hook_index >= instance->hooks.size()) {
+            throw std::runtime_error("StateHandle::get hook index out of range");
+        }
+
+        HookSlot& slot = instance->hooks[hook_index];
+        if (slot.kind != HookKind::State || slot.generation_tag != generation) {
+            throw std::runtime_error("StateHandle::get stale handle");
+        }
+
+        auto* ptr = std::any_cast<T>(&slot.payload);
+        if (!ptr) {
+            throw std::runtime_error("StateHandle::get type mismatch");
+        }
+        return *ptr;
+    }
 
     void set(const T& new_value) const {
-        if (!instance || !value_ptr) return;
-        *value_ptr = new_value;
+        if (!instance) return;
+        if (hook_index >= instance->hooks.size()) return;
+        HookSlot& slot = instance->hooks[hook_index];
+        if (slot.kind != HookKind::State || slot.generation_tag != generation) {
+            return;
+        }
+
+        auto* ptr = std::any_cast<T>(&slot.payload);
+        if (!ptr) {
+            return;
+        }
+
+        *ptr = new_value;
+
+        HookDispatcher& d = g_skia_dispatcher;
+        if (d.request_update) {
+            d.request_update(d.request_update_ctx);
+        }
     }
 
     InstanceNode* instance{nullptr};
     std::uint32_t hook_index{0};
     std::uint32_t generation{0};
-    T* value_ptr{nullptr};
 };
 
 template <typename T>
@@ -199,7 +249,7 @@ StateHandle<T> use_state(const T& initial) {
 
     HookSlot& slot = inst->hooks[index];
 
-    if (slot.kind != HookKind::State) {
+    if (slot.kind != HookKind::State || !slot.payload.has_value()) {
         slot.kind = HookKind::State;
         slot.generation_tag++;
         slot.payload = initial;
@@ -214,7 +264,6 @@ StateHandle<T> use_state(const T& initial) {
     handle.instance = inst;
     handle.hook_index = index;
     handle.generation = slot.generation_tag;
-    handle.value_ptr = value_ptr;
     return handle;
 }
 
