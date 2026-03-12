@@ -36,7 +36,9 @@ Element AppRoot() {
     button.text_g = 1.0f;
     button.text_b = 1.0f;
     button.on_click = std::make_shared<std::function<void()>>([counter]() {
-        counter.set(counter.get() + 1);
+        counter.update([](int v) {
+            return v + 1;
+        });
     });
 
     TextProps label;

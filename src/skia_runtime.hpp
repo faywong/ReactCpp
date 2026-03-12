@@ -229,6 +229,28 @@ struct StateHandle {
         }
     }
 
+    template <typename Fn>
+    void update(Fn&& fn) const {
+        if (!instance) return;
+        if (hook_index >= instance->hooks.size()) return;
+        HookSlot& slot = instance->hooks[hook_index];
+        if (slot.kind != HookKind::State || slot.generation_tag != generation) {
+            return;
+        }
+
+        auto* ptr = std::any_cast<T>(&slot.payload);
+        if (!ptr) {
+            return;
+        }
+
+        *ptr = static_cast<T>(fn(*ptr));
+
+        HookDispatcher& d = g_skia_dispatcher;
+        if (d.request_update) {
+            d.request_update(d.request_update_ctx);
+        }
+    }
+
     InstanceNode* instance{nullptr};
     std::uint32_t hook_index{0};
     std::uint32_t generation{0};
