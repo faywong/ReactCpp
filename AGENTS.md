@@ -173,6 +173,98 @@ Skia comes from [fonttools/skia-builder](https://github.com/fonttools/skia-build
 
 This keeps event handlers safe (no re-entrant render from inside handlers) while still making state changes visible through a deterministic: `state -> next-frame render -> new props -> reconcile -> picture invalidation -> draw` pipeline.
 
+#### Render pipeline (UML flowcharts)
+
+Below diagrams capture the *current* main-branch render/update pipeline in `src/skia_runtime.*`:
+- where `request_update()` comes from
+- when the VNode/virtual tree is rebuilt (gated by `update_requested_`)
+- when instance nodes are marked dirty and invalidate `cached_picture`
+- how `SkPicture` is (re)recorded and cached
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant SDL as SDL Event Loop (run_skia_app)
+  participant H as Handlers (Button/Input)
+  participant S as StateHandle<T>
+  participant D as HookDispatcher (thread_local)
+  participant RT as SkiaRuntime
+  participant R as Reconciler (reconcile)
+  participant P as Picture Cache (render_cached_node)
+
+  Note over SDL,RT: Frame loop
+  SDL->>SDL: Drain events (SDL_PollEvent)
+
+  alt Button click
+    SDL->>H: dispatch_click_bubble()
+    H->>S: set()/update()
+    S->>D: d.request_update(d.request_update_ctx)
+    D->>RT: request_update_trampoline(ctx)
+    RT->>RT: update_requested_ = true
+  else Text input / backspace
+    SDL->>H: handle_text_input()/handle_backspace()
+    H->>RT: mark_dirty(focused_input_)
+    H->>RT: request_update()  (update_requested_=true)
+  else Focus / layout changes
+    RT->>RT: set_focus()/apply_layout_results()
+    RT->>RT: mark_dirty(node) / node.dirty=true
+    Note over RT: (layout dirty does not imply request_update by itself)
+  end
+
+  SDL->>RT: perform_update_if_needed()
+  alt update_requested_ == false
+    RT-->>SDL: return (skip VNode rebuild)
+  else update_requested_ == true
+    RT->>RT: update_requested_=false
+    RT->>RT: render_frame()
+    RT->>RT: new_root = app_render_()  (rebuild VNodeTree)
+    RT->>R: reconcile(root_instance_, new_root)
+    R-->>RT: if props/layout changed => inst.dirty=true; inst.cached_picture.reset()
+  end
+
+  SDL->>RT: draw(canvas)
+  RT->>RT: Yoga layout + apply_layout_results()
+  RT->>P: render_cached_node(root_instance_)
+  alt node.dirty || !node.cached_picture
+    P->>P: SkPictureRecorder record
+    P->>P: node.cached_picture = picture; node.dirty=false
+  else cache hit
+    P->>P: canvas.drawPicture(node.cached_picture)
+  end
+```
+
+```mermaid
+flowchart TD
+  A[request_update sources] --> B1[StateHandle::set/update\n(calls HookDispatcher.request_update)]
+  A --> B2[Input handlers\n(handle_text_input/backspace)\nmark_dirty + request_update]
+  A --> B3[Other internal mutations\n(set_focus / mark_dirty)\nmay require request_update if visual output changes]
+
+  B1 --> C[SkiaRuntime.update_requested_=true]
+  B2 --> C
+  B3 --> C
+
+  C --> D{perform_update_if_needed}
+  D -->|false| E[Skip render_frame\n(no VNodeTree rebuild)]
+  D -->|true| F[render_frame\nrebuild VNodeTree via app_render_()]
+
+  F --> G[reconcile(old instance, new vnode)]
+  G --> H{local_changed || vnode.dirty ?}
+  H -->|yes| I[inst.dirty=true\ninst.cached_picture.reset()]
+  H -->|no| J[leave inst clean\nkeep cached_picture]
+
+  E --> K[draw(canvas)]
+  I --> K
+  J --> K
+
+  K --> L[render_cached_node]
+  L --> M{node.dirty || !cached_picture ?}
+  M -->|yes| N[record SkPicture\ncache it]
+  M -->|no| O[draw cached picture]
+```
+
+Notes:
+- The VNodeTree is rebuilt by `app_render_()` inside `render_frame()`. Skipping `render_frame()` (when `update_requested_ == false`) is what avoids rebuilding the VNodeTree.
+
 ### Hit testing + event dispatch (generic)
 
 - Hit testing walks the Instance tree using Yoga layout rects and returns the deepest top-most node containing the pointer.
