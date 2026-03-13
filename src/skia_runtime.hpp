@@ -291,6 +291,4 @@ StateHandle<T> use_state(const T& initial) {
 
 using AppRenderFunc = std::function<Element()>;
 
-void draw_element_tree(const Element& el, SkCanvas* canvas, int width, int height);
-
 int run_skia_app(const AppRenderFunc& app);

@@ -752,12 +752,6 @@ Element Input(const InputProps& props) {
     return e;
 }
 
-void draw_element_tree(const Element& el, SkCanvas* canvas, int width, int height) {
-    SkiaRuntime runtime([&el]() { return el; });
-    runtime.render_frame();
-    runtime.draw(canvas, width, height);
-}
-
 int run_skia_app(const AppRenderFunc& app) {
     SDL_SetMainReady();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
