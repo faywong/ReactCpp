@@ -29,6 +29,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 ├── build/                # CMake build artifacts (generated)
 └── src/
     ├── main.cpp          # SDL3 + Skia demo entry (uses skia_runtime)
+    ├── element_dsl.hpp    # Declarative Element DSL helpers (reactcpp::ui)
     ├── skia_runtime.hpp  # Public UI API (Elements/Props/Hooks) + run_skia_app()
     ├── skia_runtime.cpp  # SDL3 event loop + Skia CPU raster rendering + Yoga layout
     ├── yoga_shim.hpp     # Yoga header shim for <yoga/Yoga.h> vs <Yoga.h>
@@ -46,6 +47,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 |----------------------------------------|-------------------|-------|
 | Project build entry                     | `CMakeLists.txt`  | Builds `react_cpp_sdl_skia_demo`. Skia comes from `SKIA_BUILDER_ROOT` (external). |
 | Current demo entry                      | `src/main.cpp`    | Creates a simple element tree and calls `run_skia_app()`. |
+| Declarative UI authoring DSL helpers    | `src/element_dsl.hpp` | Thin wrappers under `reactcpp::ui` to make element trees structure-first. |
 | SDL3 + Skia + Yoga runtime              | `src/skia_runtime.*` | SDL3 event loop + Skia rendering + Yoga flexbox layout. |
 | Legacy console reconciler               | `src/runtime.*`   | Older PoC kept for reference; not used by the SDL/Skia demo. |
 | Skia headers + static libs              | `../skia-builder/` | External checkout. Build with `./build.sh`, then pass `-DSKIA_BUILDER_ROOT=...`. |
@@ -138,7 +140,7 @@ Skia comes from [fonttools/skia-builder](https://github.com/fonttools/skia-build
 ## PROCESS CONSTRAINTS
 
 - **Keep this file in sync**
-  - Any architecture/runtime changes or progress (hooks, reconciliation, event dispatch, scheduling, caching, frame boundaries) must be reflected in `AGENTS.md` in the same change set.
+  - Any architecture/runtime changes or progress (hooks, reconciliation, event dispatch, scheduling, caching, frame boundaries, and public UI authoring surfaces like the declarative DSL) must be reflected in `AGENTS.md` in the same change set.
 
 ## ARCHITECTURE NOTES (RECENT)
 
