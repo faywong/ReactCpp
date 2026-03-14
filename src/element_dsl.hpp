@@ -154,6 +154,36 @@ public:
         return std::move(self());
     }
 
+    template <std::invocable Fn>
+    Derived& on_focus(Fn&& fn) & {
+        props_.on_focus = std::make_shared<const std::function<void()>>(
+            std::function<void()>(std::forward<Fn>(fn))
+        );
+        return self();
+    }
+    template <std::invocable Fn>
+    Derived&& on_focus(Fn&& fn) && {
+        props_.on_focus = std::make_shared<const std::function<void()>>(
+            std::function<void()>(std::forward<Fn>(fn))
+        );
+        return std::move(self());
+    }
+
+    template <std::invocable Fn>
+    Derived& on_blur(Fn&& fn) & {
+        props_.on_blur = std::make_shared<const std::function<void()>>(
+            std::function<void()>(std::forward<Fn>(fn))
+        );
+        return self();
+    }
+    template <std::invocable Fn>
+    Derived&& on_blur(Fn&& fn) && {
+        props_.on_blur = std::make_shared<const std::function<void()>>(
+            std::function<void()>(std::forward<Fn>(fn))
+        );
+        return std::move(self());
+    }
+
 protected:
     Props props_{};
 

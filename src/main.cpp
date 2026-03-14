@@ -16,7 +16,7 @@ Element AppRoot() {
     (
         text()
             .margin(6.0f)
-            .value(std::string("Skia Reactive UI Runtime: ") + std::to_string(counter.get()))
+            .value(std::string("Skia Reactive UI Runtime, clicked for ") + std::to_string(counter.get()) + " times")
             .text_size(30.0f)
             .text_color(0.12f, 0.15f, 0.24f),
 

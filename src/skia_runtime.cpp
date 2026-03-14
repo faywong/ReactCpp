@@ -25,6 +25,8 @@
 #include "core/SkSurface.h"
 #include "core/SkTypeface.h"
 
+#include "effects/SkGradientShader.h"
+
 #include "ports/SkFontMgr_fontconfig.h"
 #include "ports/SkFontScanner_FreeType.h"
 
@@ -161,8 +163,6 @@ public:
         const LayoutRect r = layout_for_node(node);
 
         const std::string value = node.input_state ? node.input_state->value : props.value;
-        const std::size_t cursor = node.input_state ? node.input_state->cursor : value.size();
-        const bool focused = node.input_state && node.input_state->focused;
 
         SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
         SkPaint fill;
@@ -172,9 +172,7 @@ public:
         SkPaint border;
         border.setStyle(SkPaint::kStroke_Style);
         border.setStrokeWidth(2.0f);
-        border.setColor(focused
-            ? make_color(0.2f, 0.45f, 0.95f)
-            : make_color(props.border_r, props.border_g, props.border_b));
+        border.setColor(make_color(props.border_r, props.border_g, props.border_b));
         canvas->drawRoundRect(bounds, 6.0f, 6.0f, border);
 
         const bool showing_placeholder = value.empty() && !props.placeholder.empty();
@@ -192,15 +190,6 @@ public:
         const float text_y = baseline_for_centered_text(font, r.height);
         (void)ctx;
         canvas->drawString(text.c_str(), text_x, text_y, font, paint);
-
-        if (focused) {
-            const std::string left_text = value.substr(0, std::min(cursor, value.size()));
-            const float cursor_x = text_x + font.measureText(left_text.c_str(), left_text.size(), SkTextEncoding::kUTF8);
-            SkPaint caret;
-            caret.setColor(make_color(0.2f, 0.2f, 0.2f));
-            caret.setStrokeWidth(1.5f);
-            canvas->drawLine(cursor_x, 8.0f, cursor_x, r.height - 8.0f, caret);
-        }
     }
 };
 
@@ -428,9 +417,10 @@ public:
 
     void handle_mouse_down(float x, float y) {
         InstanceNode* hit = hit_test_at(root_instance_, x, y);
-        InstanceNode* hit_input = find_ancestor_by_type(hit, host_type_input());
-        set_focus(hit_input);
-        (void)dispatch_click_bubble(hit);
+        set_focus(hit);
+        if (hit) {
+            (void)dispatch_click_bubble(hit);
+        }
     }
 
     void handle_text_input(const char* text) {
@@ -472,24 +462,34 @@ private:
         return false;
     }
 
-    void set_focus(InstanceNode* input_node) {
-        if (focused_input_ == input_node) return;
+    void set_focus(InstanceNode* node) {
+        if (focused_node_ == node) return;
 
-        if (focused_input_) {
-            if (focused_input_->input_state) {
-                focused_input_->input_state->focused = false;
-                mark_dirty(focused_input_);
+        if (focused_node_) {
+            focused_node_->focused = false;
+            if (focused_node_->type == host_type_input() && focused_node_->input_state) {
+                focused_node_->input_state->focused = false;
+            }
+            if (auto on_blur = blur_handler_for(focused_node_->current_vnode.props)) {
+                (*on_blur)();
             }
         }
 
-        focused_input_ = input_node;
-        if (focused_input_ && focused_input_->input_state) {
-            focused_input_->input_state->focused = true;
-            focused_input_->input_state->cursor = std::min(
-                focused_input_->input_state->cursor,
-                focused_input_->input_state->value.size()
-            );
-            mark_dirty(focused_input_);
+        focused_node_ = node;
+        focused_input_ = (focused_node_ && focused_node_->type == host_type_input()) ? focused_node_ : nullptr;
+
+        if (focused_node_) {
+            focused_node_->focused = true;
+            if (focused_node_->type == host_type_input() && focused_node_->input_state) {
+                focused_node_->input_state->focused = true;
+                focused_node_->input_state->cursor = std::min(
+                    focused_node_->input_state->cursor,
+                    focused_node_->input_state->value.size()
+                );
+            }
+            if (auto on_focus = focus_handler_for(focused_node_->current_vnode.props)) {
+                (*on_focus)();
+            }
         }
     }
 
@@ -514,6 +514,18 @@ private:
             } else {
                 return nullptr;
             }
+        }, props);
+    }
+
+    static std::shared_ptr<const std::function<void()>> focus_handler_for(const ElementProps& props) {
+        return std::visit([](const auto& p) -> std::shared_ptr<const std::function<void()>> {
+            return p.on_focus;
+        }, props);
+    }
+
+    static std::shared_ptr<const std::function<void()>> blur_handler_for(const ElementProps& props) {
+        return std::visit([](const auto& p) -> std::shared_ptr<const std::function<void()>> {
+            return p.on_blur;
         }, props);
     }
 
@@ -555,6 +567,93 @@ private:
         node->cached_picture.reset();
     }
 
+    static float focus_radius_for(const InstanceNode& node) {
+        if (node.type == host_type_button()) return 8.0f;
+        if (node.type == host_type_input()) return 6.0f;
+        if (node.type == host_type_text()) return 2.0f;
+        return 0.0f;
+    }
+
+    static void draw_focus_ring(const InstanceNode& node, SkCanvas* canvas, float width, float height) {
+        if (!node.focused) return;
+        if (width <= 0.0f || height <= 0.0f) return;
+
+        const float offset = 2.0f;
+        const float w = std::max(width + offset * 2.0f, 1.0f);
+        const float h = std::max(height + offset * 2.0f, 1.0f);
+        SkRect rect = SkRect::MakeXYWH(-offset, -offset, w, h);
+
+        const SkPoint pts[2] = {
+            SkPoint::Make(rect.left(), rect.top()),
+            SkPoint::Make(rect.left(), rect.bottom())
+        };
+
+        const SkColor ring_colors[] = {
+            SkColorSetARGB(230, 120, 190, 255),
+            SkColorSetARGB(230, 51, 115, 242),
+            SkColorSetARGB(230, 30, 80, 210)
+        };
+        const SkColor glow_colors[] = {
+            SkColorSetARGB(70, 120, 190, 255),
+            SkColorSetARGB(70, 51, 115, 242),
+            SkColorSetARGB(70, 30, 80, 210)
+        };
+        const SkScalar pos[] = {0.0f, 0.5f, 1.0f};
+
+        sk_sp<SkShader> ring_shader = SkGradientShader::MakeLinear(pts, ring_colors, pos, 3, SkTileMode::kClamp);
+        sk_sp<SkShader> glow_shader = SkGradientShader::MakeLinear(pts, glow_colors, pos, 3, SkTileMode::kClamp);
+
+        SkPaint glow;
+        glow.setAntiAlias(true);
+        glow.setStyle(SkPaint::kStroke_Style);
+        glow.setStrokeWidth(6.0f);
+        glow.setColor(glow_colors[1]);
+        if (glow_shader) {
+            glow.setShader(glow_shader);
+        }
+
+        SkPaint ring;
+        ring.setAntiAlias(true);
+        ring.setStyle(SkPaint::kStroke_Style);
+        ring.setStrokeWidth(2.0f);
+        ring.setColor(ring_colors[1]);
+        if (ring_shader) {
+            ring.setShader(ring_shader);
+        }
+
+        const float radius = focus_radius_for(node);
+        if (radius > 0.0f) {
+            canvas->drawRoundRect(rect, radius + offset, radius + offset, glow);
+            canvas->drawRoundRect(rect, radius + offset, radius + offset, ring);
+        } else {
+            canvas->drawRect(rect, glow);
+            canvas->drawRect(rect, ring);
+        }
+    }
+
+    static void draw_input_caret_if_focused(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx, float height) {
+        if (!node.focused) return;
+        if (node.type != host_type_input()) return;
+        if (!node.input_state) return;
+
+        const auto& props = std::get<InputProps>(node.current_vnode.props);
+        const std::string value = node.input_state->value;
+        const std::size_t cursor = std::min(node.input_state->cursor, value.size());
+
+        const float text_x = 8.0f;
+        SkFont font;
+        font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        const std::string left_text = value.substr(0, cursor);
+        const float cursor_x = text_x + font.measureText(left_text.c_str(), left_text.size(), SkTextEncoding::kUTF8);
+        SkPaint caret;
+        caret.setAntiAlias(true);
+        caret.setColor(make_color(0.2f, 0.2f, 0.2f));
+        caret.setStrokeWidth(1.5f);
+        canvas->drawLine(cursor_x, 8.0f, cursor_x, height - 8.0f, caret);
+    }
+
     bool reconcile_children(InstanceNode& inst, const std::vector<Element>& new_children) {
         bool local_structure_changed = false;
 
@@ -572,6 +671,9 @@ private:
             for (std::size_t i = new_children.size(); i < inst.children.size(); ++i) {
                 if (focused_input_ && is_descendant_or_self(focused_input_, inst.children[i].get())) {
                     focused_input_ = nullptr;
+                }
+                if (focused_node_ && is_descendant_or_self(focused_node_, inst.children[i].get())) {
+                    focused_node_ = nullptr;
                 }
             }
             inst.children.resize(new_children.size());
@@ -614,6 +716,9 @@ private:
             if (focused_input_ && is_descendant_or_self(focused_input_, &inst)) {
                 focused_input_ = nullptr;
             }
+            if (focused_node_ && is_descendant_or_self(focused_node_, &inst)) {
+                focused_node_ = nullptr;
+            }
             inst.type = vnode.type;
             inst.current_vnode = vnode;
             if (old_type != nullptr) {
@@ -622,6 +727,7 @@ private:
             inst.children.clear();
             inst.cached_picture.reset();
             inst.dirty = true;
+            inst.focused = false;
             init_node_state(inst);
             reconcile_children(inst, vnode.children);
             return true;
@@ -682,11 +788,15 @@ private:
             render_cached_node(*child, canvas, ctx);
         }
 
+        draw_input_caret_if_focused(node, canvas, ctx, r.height);
+        draw_focus_ring(node, canvas, r.width, r.height);
+
         canvas->restore();
     }
 
     AppRenderFunc app_render_;
     InstanceNode root_instance_{};
+    InstanceNode* focused_node_{nullptr};
     InstanceNode* focused_input_{nullptr};
     sk_sp<SkFontMgr> font_mgr_;
     bool update_requested_{true};
@@ -781,7 +891,7 @@ int run_skia_app(const AppRenderFunc& app) {
 
     SDL_Texture* texture = SDL_CreateTexture(
         renderer,
-        SDL_PIXELFORMAT_RGBA8888,
+        SDL_PIXELFORMAT_BGRA8888,
         SDL_TEXTUREACCESS_STREAMING,
         width,
         height
@@ -796,7 +906,7 @@ int run_skia_app(const AppRenderFunc& app) {
     SkImageInfo info = SkImageInfo::Make(
         width,
         height,
-        kRGBA_8888_SkColorType,
+        kBGRA_8888_SkColorType,
         kPremul_SkAlphaType
     );
 

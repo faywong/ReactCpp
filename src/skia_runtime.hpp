@@ -71,6 +71,8 @@ struct ViewProps {
     float bg_b{1.0f};
     float bg_a{1.0f};
     std::shared_ptr<const std::function<void()>> on_click;
+    std::shared_ptr<const std::function<void()>> on_focus;
+    std::shared_ptr<const std::function<void()>> on_blur;
 
     bool operator==(const ViewProps& other) const {
         return style == other.style
@@ -163,6 +165,8 @@ struct InstanceNode {
     std::vector<HookSlot> hooks;
     bool dirty{true};
     std::shared_ptr<SkPicture> cached_picture;
+
+    bool focused{false};
 
     LayoutRect layout{};
 
