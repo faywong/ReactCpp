@@ -296,6 +296,7 @@ Notes:
     - Single click places the caret at the clicked x position.
     - Drag with left mouse button selects a range (selection updates continuously; uses mouse capture).
     - Double click selects a word by natural script/punctuation runs (Latin/digits/underscore, CJK run, punctuation run).
+  - Text storage: `InputState::value` is backed by `reactcpp::text::TextBuffer` (gap backend by default), while SDL/Skia interop remains UTF-8.
 
 ### Hit testing + event dispatch (generic)
 

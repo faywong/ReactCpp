@@ -9,6 +9,8 @@
 #include <string_view>
 #include <vector>
 
+#include "text_buffer.hpp"
+
 namespace reactcpp::text {
 
 inline bool is_utf8_continuation_byte(unsigned char c) {
@@ -298,7 +300,13 @@ inline std::string selected_substr(const std::string& value, Selection sel) {
     return value.substr(sel.start, sel.end - sel.start);
 }
 
-inline void erase_selection(std::string& value, std::size_t& cursor, Selection& sel) {
+inline std::string selected_substr(const TextBuffer& value, Selection sel) {
+    normalize_selection(sel, value.size());
+    if (!has_non_empty_selection(sel)) return std::string();
+    return value.substr(sel.start, sel.end - sel.start);
+}
+
+inline void erase_selection(TextBuffer& value, std::size_t& cursor, Selection& sel) {
     normalize_selection(sel, value.size());
     if (!has_non_empty_selection(sel)) {
         clear_selection(sel);
@@ -310,7 +318,7 @@ inline void erase_selection(std::string& value, std::size_t& cursor, Selection& 
     clear_selection(sel);
 }
 
-inline void insert_text(std::string& value, std::size_t& cursor, Selection& sel, std::string_view inserted) {
+inline void insert_text(TextBuffer& value, std::size_t& cursor, Selection& sel, std::string_view inserted) {
     erase_selection(value, cursor, sel);
     cursor = std::min(cursor, value.size());
     value.insert(cursor, inserted);

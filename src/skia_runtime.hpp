@@ -13,6 +13,7 @@
 #include <cstddef>
 
 #include "text_edit.hpp"
+#include "text_buffer.hpp"
 
 class SkCanvas;
 class SkPicture;
@@ -175,7 +176,7 @@ struct InstanceNode {
     std::uintptr_t yoga_node_handle{0};
 
     struct InputState {
-        std::string value;
+        reactcpp::text::TextBuffer value;
         std::size_t cursor{0};
 
         std::size_t sel_start{0};

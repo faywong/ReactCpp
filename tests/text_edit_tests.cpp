@@ -3,6 +3,7 @@
 #include <string>
 
 #include "text_edit.hpp"
+#include "text_buffer.hpp"
 
 static void test_utf8_boundaries() {
     const std::string s = std::string("a") + "\xF0\x9F\x98\x8A" + "b";
@@ -30,11 +31,11 @@ static void test_selection_erase_and_insert() {
     sel.start = 1;
     sel.end = 4;
 
-    std::string v = "hello";
+    reactcpp::text::TextBuffer v("hello");
     std::size_t cursor = 5;
 
     reactcpp::text::erase_selection(v, cursor, sel);
-    assert(v == "ho");
+    assert(v.to_string() == "ho");
     assert(cursor == 1);
     assert(!sel.active);
 
@@ -44,7 +45,7 @@ static void test_selection_erase_and_insert() {
     cursor = 2;
 
     reactcpp::text::insert_text(v, cursor, sel, "X");
-    assert(v == "hX");
+    assert(v.to_string() == "hX");
     assert(cursor == 2);
     assert(!sel.active);
 }

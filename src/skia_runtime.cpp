@@ -140,7 +140,7 @@ static void clear_preedit(InstanceNode::InputState& s) {
 
 static reactcpp::text::UndoSnapshot snapshot_from_input(const InstanceNode::InputState& s) {
     reactcpp::text::UndoSnapshot snap;
-    snap.value = s.value;
+    snap.value = s.value.to_string();
     snap.cursor = s.cursor;
     snap.sel_start = s.sel_start;
     snap.sel_end = s.sel_end;
@@ -150,7 +150,7 @@ static reactcpp::text::UndoSnapshot snapshot_from_input(const InstanceNode::Inpu
 }
 
 static void apply_snapshot(InstanceNode::InputState& s, const reactcpp::text::UndoSnapshot& snap) {
-    s.value = snap.value;
+    s.value.set_string(snap.value);
     s.cursor = std::min(snap.cursor, s.value.size());
     s.sel_start = std::min(snap.sel_start, s.value.size());
     s.sel_end = std::min(snap.sel_end, s.value.size());
@@ -220,7 +220,7 @@ public:
         const auto& props = std::get<InputProps>(node.current_vnode.props);
         const LayoutRect r = layout_for_node(node);
 
-        const std::string value = node.input_state ? node.input_state->value : props.value;
+        const std::string value = node.input_state ? node.input_state->value.to_string() : props.value;
         const bool composing = node.focused && node.input_state && !node.input_state->preedit.empty();
         const std::string preedit = composing ? node.input_state->preedit : std::string();
 
@@ -593,10 +593,10 @@ public:
         float abs_y = 0.0f;
         absolute_origin_for(focused_input_, abs_x, abs_y);
         const float local_x = (x - abs_x) - 8.0f;
-        const std::size_t caret = byte_index_for_x(state.value, local_x, font);
+        const std::size_t caret = byte_index_for_x(state.value.view(), local_x, font);
 
         if (clicks >= 2) {
-            const auto word = reactcpp::text::word_selection_at(state.value, caret);
+            const auto word = reactcpp::text::word_selection_at(state.value.view(), caret);
             state.cursor = word.active ? word.end : caret;
             state.sel_anchor = word.active ? word.start : caret;
             state.sel_start = word.start;
@@ -636,7 +636,7 @@ public:
         float abs_y = 0.0f;
         absolute_origin_for(mouse_select_target_, abs_x, abs_y);
         const float local_x = (x - abs_x) - 8.0f;
-        state.cursor = byte_index_for_x(state.value, local_x, font);
+        state.cursor = byte_index_for_x(state.value.view(), local_x, font);
 
         const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
         state.sel_start = sel.start;
@@ -704,7 +704,8 @@ public:
 
         if (state.cursor == 0 || state.value.empty()) return;
         const std::size_t cursor = std::min(state.cursor, state.value.size());
-        const std::size_t prev = reactcpp::text::utf8_prev_boundary(state.value, cursor);
+        const std::string_view v = state.value.view();
+        const std::size_t prev = reactcpp::text::utf8_prev_boundary(v, cursor);
         if (prev >= cursor) return;
         state.undo.push(snapshot_from_input(state));
         state.value.erase(prev, cursor - prev);
@@ -802,28 +803,29 @@ public:
             return;
         }
 
-        if (key == SDLK_LEFT || key == SDLK_RIGHT) {
-            state.cursor = std::min(state.cursor, state.value.size());
+            if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+                state.cursor = std::min(state.cursor, state.value.size());
 
-            const std::size_t before = state.cursor;
-            if (key == SDLK_LEFT) {
-                state.cursor = reactcpp::text::utf8_prev_boundary(state.value, state.cursor);
-            } else {
-                state.cursor = reactcpp::text::utf8_next_boundary(state.value, state.cursor);
-            }
+                const std::size_t before = state.cursor;
+                const std::string_view v = state.value.view();
+                if (key == SDLK_LEFT) {
+                    state.cursor = reactcpp::text::utf8_prev_boundary(v, state.cursor);
+                } else {
+                    state.cursor = reactcpp::text::utf8_next_boundary(v, state.cursor);
+                }
 
             if (!shift) {
                 clear_selection(state);
                 state.sel_anchor = state.cursor;
-            } else {
-                if (!state.has_selection) {
-                    state.sel_anchor = before;
+                } else {
+                    if (!state.has_selection) {
+                        state.sel_anchor = before;
+                    }
+                    const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
+                    state.sel_start = sel.start;
+                    state.sel_end = sel.end;
+                    state.has_selection = sel.active;
                 }
-                const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
-                state.sel_start = sel.start;
-                state.sel_end = sel.end;
-                state.has_selection = sel.active;
-            }
 
             mark_dirty(focused_input_);
             request_update();
@@ -1147,7 +1149,7 @@ private:
         if (!node.input_state) return;
 
         const auto& props = std::get<InputProps>(node.current_vnode.props);
-        const std::string value = node.input_state->value;
+        const std::string value = node.input_state->value.to_string();
         const std::string preedit = node.input_state->preedit;
         const std::size_t cursor = std::min(node.input_state->cursor, value.size());
 
@@ -1213,7 +1215,8 @@ private:
         if (node.type == host_type_input()) {
             const auto& props = std::get<InputProps>(node.current_vnode.props);
             InstanceNode::InputState state;
-            state.value = props.value;
+            state.value = reactcpp::text::TextBuffer(props.value);
+            state.value.set_kind(reactcpp::text::TextBuffer::Kind::Gap);
             state.cursor = state.value.size();
             state.sel_start = 0;
             state.sel_end = 0;
@@ -1256,8 +1259,9 @@ private:
             local_changed = true;
             if (inst.type == host_type_input() && inst.input_state) {
                 const auto& new_input = std::get<InputProps>(vnode.props);
-                if (inst.input_state->value != new_input.value) {
-                    inst.input_state->value = new_input.value;
+                const std::string current = inst.input_state->value.to_string();
+                if (current != new_input.value) {
+                    inst.input_state->value.set_string(new_input.value);
                     inst.input_state->cursor = std::min(inst.input_state->cursor, inst.input_state->value.size());
                     clear_preedit(*inst.input_state);
                     reactcpp::text::Selection sel = selection_from(*inst.input_state);
