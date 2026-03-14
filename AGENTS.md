@@ -292,6 +292,10 @@ Notes:
     - `Ctrl/Cmd + Z` undo (multi-level) for text edits.
     - `Ctrl/Cmd + C/X/V` copy/cut/paste via SDL3 system clipboard.
     - Selection is tracked logically (`sel_start/sel_end/sel_anchor/has_selection`) and rendered as a dark-blue highlight with subtle rounded corners.
+  - Mouse editing is supported for the focused Input:
+    - Single click places the caret at the clicked x position.
+    - Drag with left mouse button selects a range (selection updates continuously; uses mouse capture).
+    - Double click selects a word by natural script/punctuation runs (Latin/digits/underscore, CJK run, punctuation run).
 
 ### Hit testing + event dispatch (generic)
 

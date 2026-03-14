@@ -40,6 +40,8 @@
 
 #define REACTCPP_SDL_EVENT_QUIT SDL_EVENT_QUIT
 #define REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN SDL_EVENT_MOUSE_BUTTON_DOWN
+#define REACTCPP_SDL_EVENT_MOUSE_BUTTON_UP SDL_EVENT_MOUSE_BUTTON_UP
+#define REACTCPP_SDL_EVENT_MOUSE_MOTION SDL_EVENT_MOUSE_MOTION
 #define REACTCPP_SDL_EVENT_TEXT_INPUT SDL_EVENT_TEXT_INPUT
 #define REACTCPP_SDL_EVENT_TEXT_EDITING SDL_EVENT_TEXT_EDITING
 #define REACTCPP_SDL_EVENT_KEY_DOWN SDL_EVENT_KEY_DOWN
@@ -502,8 +504,10 @@ static void apply_layout_results(InstanceNode& node) {
 
 class SkiaRuntime {
 public:
-    SkiaRuntime(AppRenderFunc app, SDL_Window* window)
+    SkiaRuntime(AppRenderFunc app, SDL_Window* window, int surface_w, int surface_h)
         : app_render_(std::move(app))
+        , surface_width_(surface_w)
+        , surface_height_(surface_h)
         , window_(window) {
         font_mgr_ = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
 
@@ -547,11 +551,108 @@ public:
     }
 
     void handle_mouse_down(float x, float y) {
+        handle_mouse_button_down(x, y, 1);
+    }
+
+    void handle_mouse_button_down(float win_x, float win_y, std::uint8_t clicks) {
+        float x = win_x;
+        float y = win_y;
+        window_to_surface(x, y);
+
         InstanceNode* hit = hit_test_at(root_instance_, x, y);
-        set_focus(hit);
-        if (hit) {
-            (void)dispatch_click_bubble(hit);
+        InstanceNode* hit_input = find_ancestor_by_type(hit, host_type_input());
+        set_focus(hit_input ? hit_input : hit);
+
+        if (!hit_input || !hit_input->input_state) {
+            mouse_selecting_ = false;
+            mouse_select_target_ = nullptr;
+            if (window_) {
+                (void)SDL_CaptureMouse(false);
+            }
+            if (hit) {
+                (void)dispatch_click_bubble(hit);
+            }
+            return;
         }
+
+        if (hit_input != focused_input_) {
+            return;
+        }
+
+        auto& state = *focused_input_->input_state;
+        if (!state.preedit.empty()) {
+            return;
+        }
+
+        const auto& props = std::get<InputProps>(focused_input_->current_vnode.props);
+        SkFont font;
+        font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(font_mgr_));
+
+        float abs_x = 0.0f;
+        float abs_y = 0.0f;
+        absolute_origin_for(focused_input_, abs_x, abs_y);
+        const float local_x = (x - abs_x) - 8.0f;
+        const std::size_t caret = byte_index_for_x(state.value, local_x, font);
+
+        if (clicks >= 2) {
+            const auto word = reactcpp::text::word_selection_at(state.value, caret);
+            state.cursor = word.active ? word.end : caret;
+            state.sel_anchor = word.active ? word.start : caret;
+            state.sel_start = word.start;
+            state.sel_end = word.end;
+            state.has_selection = word.active;
+        } else {
+            clear_selection(state);
+            state.cursor = caret;
+            state.sel_anchor = caret;
+        }
+
+        mouse_selecting_ = true;
+        mouse_select_target_ = focused_input_;
+        if (window_) {
+            (void)SDL_CaptureMouse(true);
+        }
+        mark_dirty(focused_input_);
+        request_update();
+    }
+
+    void handle_mouse_move(float win_x, float win_y) {
+        if (!mouse_selecting_ || !mouse_select_target_ || !mouse_select_target_->input_state) return;
+        auto& state = *mouse_select_target_->input_state;
+        if (!state.preedit.empty()) return;
+
+        float x = win_x;
+        float y = win_y;
+        window_to_surface(x, y);
+
+        (void)y;
+        const auto& props = std::get<InputProps>(mouse_select_target_->current_vnode.props);
+        SkFont font;
+        font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(font_mgr_));
+
+        float abs_x = 0.0f;
+        float abs_y = 0.0f;
+        absolute_origin_for(mouse_select_target_, abs_x, abs_y);
+        const float local_x = (x - abs_x) - 8.0f;
+        state.cursor = byte_index_for_x(state.value, local_x, font);
+
+        const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
+        state.sel_start = sel.start;
+        state.sel_end = sel.end;
+        state.has_selection = sel.active;
+
+        mark_dirty(mouse_select_target_);
+        request_update();
+    }
+
+    void handle_mouse_button_up(float, float) {
+        if (window_) {
+            (void)SDL_CaptureMouse(false);
+        }
+        mouse_selecting_ = false;
+        mouse_select_target_ = nullptr;
     }
 
     void handle_text_input(const char* text) {
@@ -738,6 +839,26 @@ private:
 
     void request_update() {
         update_requested_ = true;
+    }
+
+    void window_to_surface(float& x, float& y) const {
+        if (!window_) return;
+        int win_w = 0;
+        int win_h = 0;
+        if (!SDL_GetWindowSize(window_, &win_w, &win_h)) return;
+        if (win_w <= 0 || win_h <= 0) return;
+        x = x * (static_cast<float>(surface_width_) / static_cast<float>(win_w));
+        y = y * (static_cast<float>(surface_height_) / static_cast<float>(win_h));
+    }
+
+    static std::size_t byte_index_for_x(std::string_view s, float local_x, const SkFont& font) {
+        return reactcpp::text::byte_index_for_x(
+            s,
+            local_x,
+            [&](std::size_t bytes) {
+                return font.measureText(s.data(), bytes, SkTextEncoding::kUTF8);
+            }
+        );
     }
 
     static bool is_descendant_or_self(const InstanceNode* node, const InstanceNode* possible_ancestor) {
@@ -1203,6 +1324,12 @@ private:
     sk_sp<SkFontMgr> font_mgr_;
     bool update_requested_{true};
 
+    bool mouse_selecting_{false};
+    InstanceNode* mouse_select_target_{nullptr};
+
+    int surface_width_{800};
+    int surface_height_{600};
+
     SDL_Window* window_{nullptr};
     std::optional<SDL_Rect> last_text_input_area_;
     int last_text_input_cursor_px_{-1};
@@ -1330,7 +1457,7 @@ int run_skia_app(const AppRenderFunc& app) {
         throw std::runtime_error("SkSurface::MakeRasterDirect failed");
     }
 
-    SkiaRuntime runtime(app, window);
+    SkiaRuntime runtime(app, window, width, height);
     runtime.perform_update_if_needed();
 
     bool running = true;
@@ -1340,7 +1467,13 @@ int run_skia_app(const AppRenderFunc& app) {
             if (e.type == REACTCPP_SDL_EVENT_QUIT) {
                 running = false;
             } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
-                runtime.handle_mouse_down(static_cast<float>(e.button.x), static_cast<float>(e.button.y));
+                runtime.handle_mouse_button_down(static_cast<float>(e.button.x), static_cast<float>(e.button.y), e.button.clicks);
+            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_MOTION) {
+                if (e.motion.state & SDL_BUTTON_LMASK) {
+                    runtime.handle_mouse_move(static_cast<float>(e.motion.x), static_cast<float>(e.motion.y));
+                }
+            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
+                runtime.handle_mouse_button_up(static_cast<float>(e.button.x), static_cast<float>(e.button.y));
             } else if (e.type == REACTCPP_SDL_EVENT_TEXT_EDITING) {
                 runtime.handle_text_editing(e.edit.text, e.edit.start, e.edit.length);
             } else if (e.type == REACTCPP_SDL_EVENT_TEXT_INPUT) {

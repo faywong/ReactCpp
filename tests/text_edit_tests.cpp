@@ -105,10 +105,70 @@ static void test_undo_history() {
     assert(u->value == "abc");
 }
 
+static void test_word_selection_runs() {
+    const std::string s = std::string("hello") + "\xE4\xB8\x96\xE7\x95\x8C" + ",foo_bar123 " + "\xE4\xB8\xAD\xE6\x96\x87";
+
+    {
+        const auto sel = reactcpp::text::word_selection_at(s, 1);
+        assert(sel.active);
+        assert(sel.start == 0);
+        assert(sel.end == 5);
+    }
+
+    {
+        const auto sel = reactcpp::text::word_selection_at(s, 5);
+        assert(sel.active);
+        assert(sel.start == 5);
+        assert(sel.end == 11);
+    }
+
+    {
+        const auto sel = reactcpp::text::word_selection_at(s, 11);
+        assert(sel.active);
+        assert(sel.start == 11);
+        assert(sel.end == 12);
+    }
+
+    {
+        const auto sel = reactcpp::text::word_selection_at(s, 13);
+        assert(sel.active);
+        assert(sel.start == 12);
+        assert(sel.end == 22);
+    }
+
+    {
+        const auto sel = reactcpp::text::word_selection_at(s, 22);
+        assert(!sel.active);
+        assert(sel.start == 0);
+        assert(sel.end == 0);
+    }
+
+    {
+        const auto sel = reactcpp::text::word_selection_at(s, 23);
+        assert(sel.active);
+        assert(sel.end - sel.start == 6);
+    }
+}
+
+static void test_byte_index_for_x_monospaced() {
+    const std::string s = "abcd";
+    auto measure = [](std::size_t bytes) { return static_cast<float>(bytes); };
+
+    assert(reactcpp::text::byte_index_for_x(s, -1.0f, measure) == 0);
+    assert(reactcpp::text::byte_index_for_x(s, 0.0f, measure) == 0);
+    assert(reactcpp::text::byte_index_for_x(s, 0.49f, measure) == 0);
+    assert(reactcpp::text::byte_index_for_x(s, 0.51f, measure) == 1);
+    assert(reactcpp::text::byte_index_for_x(s, 1.2f, measure) == 1);
+    assert(reactcpp::text::byte_index_for_x(s, 1.8f, measure) == 2);
+    assert(reactcpp::text::byte_index_for_x(s, 10.0f, measure) == 4);
+}
+
 int main() {
     test_utf8_boundaries();
     test_selection_erase_and_insert();
     test_selection_from_anchor();
     test_undo_history();
+    test_word_selection_runs();
+    test_byte_index_for_x_monospaced();
     return 0;
 }
