@@ -9,6 +9,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "text_edit.hpp"
+
 #include "yoga_shim.hpp"
 
 #include "core/SkCanvas.h"
@@ -21,6 +23,7 @@
 #include "core/SkPaint.h"
 #include "core/SkPicture.h"
 #include "core/SkPictureRecorder.h"
+#include "core/SkRRect.h"
 #include "core/SkRect.h"
 #include "core/SkRefCnt.h"
 #include "core/SkSurface.h"
@@ -99,18 +102,38 @@ static SkScalar baseline_for_centered_text(const SkFont& font, SkScalar box_heig
     return (box_height - text_height) * 0.5f - metrics.fAscent;
 }
 
-static bool is_utf8_continuation_byte(unsigned char c) {
-    return (c & 0xC0) == 0x80;
+static reactcpp::text::Selection selection_from(const InstanceNode::InputState& s) {
+    reactcpp::text::Selection sel;
+    sel.active = s.has_selection;
+    sel.start = s.sel_start;
+    sel.end = s.sel_end;
+    reactcpp::text::normalize_selection(sel, s.value.size());
+    return sel;
 }
 
-static std::size_t utf8_prev_boundary(const std::string& s, std::size_t cursor) {
-    cursor = std::min(cursor, s.size());
-    if (cursor == 0) return 0;
-    std::size_t i = cursor;
-    do {
-        --i;
-    } while (i > 0 && is_utf8_continuation_byte(static_cast<unsigned char>(s[i])));
-    return i;
+static void selection_to(InstanceNode::InputState& s, const reactcpp::text::Selection& sel) {
+    s.sel_start = std::min(sel.start, s.value.size());
+    s.sel_end = std::min(sel.end, s.value.size());
+    s.has_selection = sel.active && s.sel_start < s.sel_end;
+}
+
+static void clear_selection(InstanceNode::InputState& s) {
+    s.sel_start = 0;
+    s.sel_end = 0;
+    s.sel_anchor = 0;
+    s.has_selection = false;
+}
+
+static void clear_selection_keep_anchor(InstanceNode::InputState& s) {
+    s.sel_start = 0;
+    s.sel_end = 0;
+    s.has_selection = false;
+}
+
+static void clear_preedit(InstanceNode::InputState& s) {
+    s.preedit.clear();
+    s.preedit_start = -1;
+    s.preedit_length = -1;
 }
 
 class ElementRenderer {
@@ -228,7 +251,47 @@ public:
             x += preedit_w;
             canvas->drawString(right.c_str(), x, text_y, font, paint);
         } else {
-            canvas->drawString(value.c_str(), text_x, text_y, font, paint);
+            if (node.input_state && node.input_state->has_selection && node.input_state->sel_start < node.input_state->sel_end) {
+                const std::size_t start = std::min(node.input_state->sel_start, value.size());
+                const std::size_t end = std::min(node.input_state->sel_end, value.size());
+
+                const std::string left = value.substr(0, start);
+                const std::string mid = value.substr(start, end - start);
+                const std::string right = value.substr(end);
+
+                SkFontMetrics metrics;
+                font.getMetrics(&metrics);
+
+                const float left_w = font.measureText(left.c_str(), left.size(), SkTextEncoding::kUTF8);
+                const float mid_w = font.measureText(mid.c_str(), mid.size(), SkTextEncoding::kUTF8);
+
+                SkPaint highlight;
+                highlight.setColor(static_cast<SkColor>(0xFF1E3A8A));
+                highlight.setAntiAlias(true);
+                highlight.setStyle(SkPaint::kFill_Style);
+
+                const float top = text_y + metrics.fAscent;
+                const float bottom = text_y + metrics.fDescent;
+                const float pad_y = 1.0f;
+                const float left_x = text_x + left_w;
+
+                canvas->save();
+                SkRRect clip_rr;
+                clip_rr.setRectXY(bounds, 6.0f, 6.0f);
+                canvas->clipRRect(clip_rr, true);
+                canvas->drawRect(SkRect::MakeLTRB(left_x, top - pad_y, left_x + mid_w, bottom + pad_y), highlight);
+
+                canvas->drawString(left.c_str(), text_x, text_y, font, paint);
+
+                SkPaint selected_paint = paint;
+                selected_paint.setColor(SK_ColorWHITE);
+                canvas->drawString(mid.c_str(), left_x, text_y, font, selected_paint);
+
+                canvas->drawString(right.c_str(), left_x + mid_w, text_y, font, paint);
+                canvas->restore();
+            } else {
+                canvas->drawString(value.c_str(), text_x, text_y, font, paint);
+            }
         }
     }
 };
@@ -470,12 +533,11 @@ public:
         if (!focused_input_ || !focused_input_->input_state) return;
         auto& state = *focused_input_->input_state;
         const std::string inserted(text ? text : "");
-        state.cursor = std::min(state.cursor, state.value.size());
-        state.value.insert(state.cursor, inserted);
-        state.cursor += inserted.size();
-        state.preedit.clear();
-        state.preedit_start = -1;
-        state.preedit_length = -1;
+        reactcpp::text::Selection sel = selection_from(state);
+        reactcpp::text::insert_text(state.value, state.cursor, sel, inserted);
+        selection_to(state, sel);
+        state.sel_anchor = state.cursor;
+        clear_preedit(state);
         mark_dirty(focused_input_);
         request_update();
     }
@@ -497,14 +559,129 @@ public:
         if (!state.preedit.empty()) {
             return;
         }
+
+        {
+            reactcpp::text::Selection sel = selection_from(state);
+            if (reactcpp::text::has_non_empty_selection(sel)) {
+                reactcpp::text::erase_selection(state.value, state.cursor, sel);
+                selection_to(state, sel);
+                state.sel_anchor = state.cursor;
+                mark_dirty(focused_input_);
+                request_update();
+                return;
+            }
+        }
+
         if (state.cursor == 0 || state.value.empty()) return;
         const std::size_t cursor = std::min(state.cursor, state.value.size());
-        const std::size_t prev = utf8_prev_boundary(state.value, cursor);
+        const std::size_t prev = reactcpp::text::utf8_prev_boundary(state.value, cursor);
         if (prev >= cursor) return;
         state.value.erase(prev, cursor - prev);
         state.cursor = prev;
+        state.sel_anchor = state.cursor;
         mark_dirty(focused_input_);
         request_update();
+    }
+
+    void handle_key_down(SDL_Keycode key, SDL_Keymod mod, bool) {
+        if (!focused_input_ || !focused_input_->input_state) return;
+        auto& state = *focused_input_->input_state;
+
+        const bool accel = (mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0;
+        const bool shift = (mod & SDL_KMOD_SHIFT) != 0;
+
+        if (accel) {
+            if (!state.preedit.empty() && window_) {
+                (void)SDL_ClearComposition(window_);
+                clear_preedit(state);
+            }
+
+            reactcpp::text::Selection sel = selection_from(state);
+
+            if (key == SDLK_A) {
+                sel.active = !state.value.empty();
+                sel.start = 0;
+                sel.end = state.value.size();
+                state.cursor = sel.end;
+                selection_to(state, sel);
+                state.sel_anchor = 0;
+                mark_dirty(focused_input_);
+                request_update();
+                return;
+            }
+
+            if (key == SDLK_C) {
+                const std::string copy = reactcpp::text::selected_substr(state.value, sel);
+                if (!copy.empty()) {
+                    (void)SDL_SetClipboardText(copy.c_str());
+                }
+                return;
+            }
+
+            if (key == SDLK_X) {
+                const std::string cut = reactcpp::text::selected_substr(state.value, sel);
+                if (!cut.empty()) {
+                    (void)SDL_SetClipboardText(cut.c_str());
+                    reactcpp::text::erase_selection(state.value, state.cursor, sel);
+                    selection_to(state, sel);
+                    state.sel_anchor = state.cursor;
+                    mark_dirty(focused_input_);
+                    request_update();
+                }
+                return;
+            }
+
+            if (key == SDLK_V) {
+                char* clip = SDL_GetClipboardText();
+                const std::string paste = clip ? std::string(clip) : std::string();
+                if (clip) SDL_free(clip);
+                if (!paste.empty()) {
+                    reactcpp::text::insert_text(state.value, state.cursor, sel, paste);
+                    selection_to(state, sel);
+                    state.sel_anchor = state.cursor;
+                    mark_dirty(focused_input_);
+                    request_update();
+                }
+                return;
+            }
+        }
+
+        if (key == SDLK_BACKSPACE) {
+            handle_backspace();
+            return;
+        }
+
+        if (!state.preedit.empty()) {
+            return;
+        }
+
+        if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+            state.cursor = std::min(state.cursor, state.value.size());
+
+            const std::size_t before = state.cursor;
+            if (key == SDLK_LEFT) {
+                state.cursor = reactcpp::text::utf8_prev_boundary(state.value, state.cursor);
+            } else {
+                state.cursor = reactcpp::text::utf8_next_boundary(state.value, state.cursor);
+            }
+
+            if (!shift) {
+                clear_selection(state);
+                state.sel_anchor = state.cursor;
+            } else {
+                if (!state.has_selection) {
+                    state.sel_anchor = before;
+                }
+                const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
+                state.sel_start = sel.start;
+                state.sel_end = sel.end;
+                state.has_selection = sel.active;
+            }
+
+            mark_dirty(focused_input_);
+            request_update();
+            return;
+        }
     }
 
 private:
@@ -535,9 +712,8 @@ private:
             focused_node_->focused = false;
             if (focused_node_->type == host_type_input() && focused_node_->input_state) {
                 focused_node_->input_state->focused = false;
-                focused_node_->input_state->preedit.clear();
-                focused_node_->input_state->preedit_start = -1;
-                focused_node_->input_state->preedit_length = -1;
+                clear_preedit(*focused_node_->input_state);
+                clear_selection(*focused_node_->input_state);
             }
             if (auto on_blur = blur_handler_for(focused_node_->current_vnode.props)) {
                 (*on_blur)();
@@ -562,6 +738,8 @@ private:
                     focused_node_->input_state->cursor,
                     focused_node_->input_state->value.size()
                 );
+                reactcpp::text::Selection sel = selection_from(*focused_node_->input_state);
+                selection_to(*focused_node_->input_state, sel);
             }
             if (auto on_focus = focus_handler_for(focused_node_->current_vnode.props)) {
                 (*on_focus)();
@@ -870,10 +1048,12 @@ private:
             InstanceNode::InputState state;
             state.value = props.value;
             state.cursor = state.value.size();
+            state.sel_start = 0;
+            state.sel_end = 0;
+            state.sel_anchor = state.cursor;
+            state.has_selection = false;
             state.focused = false;
-            state.preedit.clear();
-            state.preedit_start = -1;
-            state.preedit_length = -1;
+            clear_preedit(state);
             node.input_state = std::move(state);
         } else {
             node.input_state.reset();
@@ -912,9 +1092,10 @@ private:
                 if (inst.input_state->value != new_input.value) {
                     inst.input_state->value = new_input.value;
                     inst.input_state->cursor = std::min(inst.input_state->cursor, inst.input_state->value.size());
-                    inst.input_state->preedit.clear();
-                    inst.input_state->preedit_start = -1;
-                    inst.input_state->preedit_length = -1;
+                    clear_preedit(*inst.input_state);
+                    reactcpp::text::Selection sel = selection_from(*inst.input_state);
+                    selection_to(*inst.input_state, sel);
+                    inst.input_state->sel_anchor = inst.input_state->cursor;
                 }
             }
         }
@@ -1118,8 +1299,8 @@ int run_skia_app(const AppRenderFunc& app) {
                 runtime.handle_text_editing(e.edit.text, e.edit.start, e.edit.length);
             } else if (e.type == REACTCPP_SDL_EVENT_TEXT_INPUT) {
                 runtime.handle_text_input(e.text.text);
-            } else if (e.type == REACTCPP_SDL_EVENT_KEY_DOWN && e.key.key == SDLK_BACKSPACE) {
-                runtime.handle_backspace();
+            } else if (e.type == REACTCPP_SDL_EVENT_KEY_DOWN) {
+                runtime.handle_key_down(e.key.key, e.key.mod, e.key.repeat);
             }
         }
 

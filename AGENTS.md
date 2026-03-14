@@ -285,6 +285,12 @@ Notes:
   - `SDL_EVENT_TEXT_EDITING` updates transient preedit/composition text (`InputState::preedit`), rendered underlined.
   - Text input mode is focus-gated: `SDL_StartTextInput(window)` on Input focus; `SDL_ClearComposition` + `SDL_StopTextInput(window)` on blur.
   - Candidate window positioning is updated after layout via `SDL_SetTextInputArea(window, rect, cursor_px)`.
+  - Basic editor shortcuts are supported for the focused Input:
+    - Left/Right arrow moves the caret by UTF-8 codepoint boundary.
+    - Shift + Left/Right extends or shrinks the selection.
+    - `Ctrl/Cmd + A` selects all committed text (`InputState::value`).
+    - `Ctrl/Cmd + C/X/V` copy/cut/paste via SDL3 system clipboard.
+    - Selection is tracked logically (`sel_start/sel_end/sel_anchor/has_selection`) and rendered as a dark-blue highlight.
 
 ### Hit testing + event dispatch (generic)
 

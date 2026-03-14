@@ -175,6 +175,12 @@ struct InstanceNode {
     struct InputState {
         std::string value;
         std::size_t cursor{0};
+
+        std::size_t sel_start{0};
+        std::size_t sel_end{0};
+        std::size_t sel_anchor{0};
+        bool has_selection{false};
+
         bool focused{false};
 
         std::string preedit;

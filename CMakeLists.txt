@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+enable_testing()
+
 include(FetchContent)
 
 # Skia + SDL3 Demo
@@ -15,6 +17,17 @@ add_executable(react_cpp_sdl_skia_demo
     src/skia_runtime.cpp
     src/main.cpp
 )
+
+add_executable(react_cpp_text_edit_tests
+    tests/text_edit_tests.cpp
+)
+
+target_include_directories(react_cpp_text_edit_tests
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+add_test(NAME text_edit_tests COMMAND react_cpp_text_edit_tests)
 
 # Yoga (Flexbox layout)
 FetchContent_Declare(
