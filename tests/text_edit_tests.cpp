@@ -70,9 +70,45 @@ static void test_selection_from_anchor() {
     }
 }
 
+static void test_undo_history() {
+    reactcpp::text::UndoHistory h(3);
+
+    reactcpp::text::UndoSnapshot s1;
+    s1.value = "a";
+    s1.cursor = 1;
+
+    reactcpp::text::UndoSnapshot s2;
+    s2.value = "ab";
+    s2.cursor = 2;
+
+    reactcpp::text::UndoSnapshot s3;
+    s3.value = "abc";
+    s3.cursor = 3;
+
+    reactcpp::text::UndoSnapshot s4;
+    s4.value = "abcd";
+    s4.cursor = 4;
+
+    h.push(s1);
+    h.push(s2);
+    h.push(s3);
+    h.push(s4);
+
+    assert(h.size() == 3);
+
+    auto u = h.pop();
+    assert(u.has_value());
+    assert(u->value == "abcd");
+
+    u = h.pop();
+    assert(u.has_value());
+    assert(u->value == "abc");
+}
+
 int main() {
     test_utf8_boundaries();
     test_selection_erase_and_insert();
     test_selection_from_anchor();
+    test_undo_history();
     return 0;
 }

@@ -12,6 +12,8 @@
 
 #include <cstddef>
 
+#include "text_edit.hpp"
+
 class SkCanvas;
 class SkPicture;
 
@@ -186,6 +188,8 @@ struct InstanceNode {
         std::string preedit;
         int preedit_start{-1};
         int preedit_length{-1};
+
+        reactcpp::text::UndoHistory undo{100};
     };
     std::optional<InputState> input_state;
 };

@@ -12,7 +12,7 @@ enable_testing()
 include(FetchContent)
 
 # Skia + SDL3 Demo
-add_executable(react_cpp_sdl_skia_demo
+add_executable(reactcpp_demo
     src/skia_runtime.hpp
     src/skia_runtime.cpp
     src/main.cpp
@@ -102,26 +102,26 @@ if (NOT REACTCPP_SDL_FOUND)
 endif()
 
 if (REACTCPP_SDL_INCLUDE_DIRS)
-    target_include_directories(react_cpp_sdl_skia_demo
+    target_include_directories(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_INCLUDE_DIRS}
     )
 endif()
 
 if (REACTCPP_SDL_CFLAGS_OTHER)
-    target_compile_options(react_cpp_sdl_skia_demo
+    target_compile_options(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_CFLAGS_OTHER}
     )
 endif()
 
 if (REACTCPP_SDL_IMPORTED_TARGET)
-    target_link_libraries(react_cpp_sdl_skia_demo
+    target_link_libraries(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_IMPORTED_TARGET}
     )
 else()
-    target_link_libraries(react_cpp_sdl_skia_demo
+    target_link_libraries(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_LIBRARIES}
     )
@@ -148,20 +148,20 @@ if (NOT EXISTS "${SKIA_ROOT}/include/core/SkCanvas.h")
     message(FATAL_ERROR "Skia headers not found: expected ${SKIA_ROOT}/include/core/SkCanvas.h")
 endif()
 
-target_include_directories(react_cpp_sdl_skia_demo
+target_include_directories(reactcpp_demo
     PRIVATE
         "${SKIA_ROOT}/include"  # for core/SkCanvas.h
         "${SKIA_ROOT}"
 )
 
-target_link_libraries(react_cpp_sdl_skia_demo
+target_link_libraries(reactcpp_demo
     PRIVATE
         "${SKIA_LIB_PATH}"
 )
 
 # Some Skia builds require skcms as a separate static lib.
 if (EXISTS "${SKIA_SKCMS_LIB_PATH}")
-    target_link_libraries(react_cpp_sdl_skia_demo
+    target_link_libraries(reactcpp_demo
         PRIVATE
             "${SKIA_SKCMS_LIB_PATH}"
     )
@@ -178,14 +178,14 @@ if (PkgConfig_FOUND)
     pkg_check_modules(HARFBUZZ QUIET harfbuzz)
 
     if (FREETYPE2_FOUND AND FONTCONFIG_FOUND AND HARFBUZZ_FOUND)
-        target_include_directories(react_cpp_sdl_skia_demo
+        target_include_directories(reactcpp_demo
             PRIVATE
                 ${FREETYPE2_INCLUDE_DIRS}
                 ${FONTCONFIG_INCLUDE_DIRS}
                 ${HARFBUZZ_INCLUDE_DIRS}
         )
 
-        target_compile_options(react_cpp_sdl_skia_demo
+        target_compile_options(reactcpp_demo
             PRIVATE
                 ${FREETYPE2_CFLAGS_OTHER}
                 ${FONTCONFIG_CFLAGS_OTHER}
@@ -194,7 +194,7 @@ if (PkgConfig_FOUND)
 
         # NOTE: link order matters for static libs: dependents first, dependencies after.
         # fontconfig can depend on freetype, so keep fontconfig before freetype.
-        target_link_libraries(react_cpp_sdl_skia_demo
+        target_link_libraries(reactcpp_demo
             PRIVATE
                 ${FONTCONFIG_LIBRARIES}
                 ${FREETYPE2_LIBRARIES}
@@ -207,7 +207,7 @@ if (PkgConfig_FOUND)
     endif()
 endif()
 
-target_link_libraries(react_cpp_sdl_skia_demo
+target_link_libraries(reactcpp_demo
     PRIVATE
         Threads::Threads
         yogacore

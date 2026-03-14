@@ -136,6 +136,26 @@ static void clear_preedit(InstanceNode::InputState& s) {
     s.preedit_length = -1;
 }
 
+static reactcpp::text::UndoSnapshot snapshot_from_input(const InstanceNode::InputState& s) {
+    reactcpp::text::UndoSnapshot snap;
+    snap.value = s.value;
+    snap.cursor = s.cursor;
+    snap.sel_start = s.sel_start;
+    snap.sel_end = s.sel_end;
+    snap.sel_anchor = s.sel_anchor;
+    snap.has_selection = s.has_selection;
+    return snap;
+}
+
+static void apply_snapshot(InstanceNode::InputState& s, const reactcpp::text::UndoSnapshot& snap) {
+    s.value = snap.value;
+    s.cursor = std::min(snap.cursor, s.value.size());
+    s.sel_start = std::min(snap.sel_start, s.value.size());
+    s.sel_end = std::min(snap.sel_end, s.value.size());
+    s.sel_anchor = std::min(snap.sel_anchor, s.value.size());
+    s.has_selection = snap.has_selection && s.sel_start < s.sel_end;
+}
+
 class ElementRenderer {
 public:
     virtual ~ElementRenderer() = default;
@@ -279,7 +299,12 @@ public:
                 SkRRect clip_rr;
                 clip_rr.setRectXY(bounds, 6.0f, 6.0f);
                 canvas->clipRRect(clip_rr, true);
-                canvas->drawRect(SkRect::MakeLTRB(left_x, top - pad_y, left_x + mid_w, bottom + pad_y), highlight);
+                canvas->drawRoundRect(
+                    SkRect::MakeLTRB(left_x, top - pad_y, left_x + mid_w, bottom + pad_y),
+                    2.0f,
+                    2.0f,
+                    highlight
+                );
 
                 canvas->drawString(left.c_str(), text_x, text_y, font, paint);
 
@@ -533,6 +558,9 @@ public:
         if (!focused_input_ || !focused_input_->input_state) return;
         auto& state = *focused_input_->input_state;
         const std::string inserted(text ? text : "");
+        if (!inserted.empty()) {
+            state.undo.push(snapshot_from_input(state));
+        }
         reactcpp::text::Selection sel = selection_from(state);
         reactcpp::text::insert_text(state.value, state.cursor, sel, inserted);
         selection_to(state, sel);
@@ -563,6 +591,7 @@ public:
         {
             reactcpp::text::Selection sel = selection_from(state);
             if (reactcpp::text::has_non_empty_selection(sel)) {
+                state.undo.push(snapshot_from_input(state));
                 reactcpp::text::erase_selection(state.value, state.cursor, sel);
                 selection_to(state, sel);
                 state.sel_anchor = state.cursor;
@@ -576,6 +605,7 @@ public:
         const std::size_t cursor = std::min(state.cursor, state.value.size());
         const std::size_t prev = reactcpp::text::utf8_prev_boundary(state.value, cursor);
         if (prev >= cursor) return;
+        state.undo.push(snapshot_from_input(state));
         state.value.erase(prev, cursor - prev);
         state.cursor = prev;
         state.sel_anchor = state.cursor;
@@ -597,6 +627,20 @@ public:
             }
 
             reactcpp::text::Selection sel = selection_from(state);
+
+            if (key == SDLK_Z) {
+                auto snap = state.undo.pop();
+                if (snap) {
+                    if (!state.preedit.empty() && window_) {
+                        (void)SDL_ClearComposition(window_);
+                    }
+                    apply_snapshot(state, *snap);
+                    clear_preedit(state);
+                    mark_dirty(focused_input_);
+                    request_update();
+                }
+                return;
+            }
 
             if (key == SDLK_A) {
                 sel.active = !state.value.empty();
@@ -622,6 +666,7 @@ public:
                 const std::string cut = reactcpp::text::selected_substr(state.value, sel);
                 if (!cut.empty()) {
                     (void)SDL_SetClipboardText(cut.c_str());
+                    state.undo.push(snapshot_from_input(state));
                     reactcpp::text::erase_selection(state.value, state.cursor, sel);
                     selection_to(state, sel);
                     state.sel_anchor = state.cursor;
@@ -636,6 +681,7 @@ public:
                 const std::string paste = clip ? std::string(clip) : std::string();
                 if (clip) SDL_free(clip);
                 if (!paste.empty()) {
+                    state.undo.push(snapshot_from_input(state));
                     reactcpp::text::insert_text(state.value, state.cursor, sel, paste);
                     selection_to(state, sel);
                     state.sel_anchor = state.cursor;
@@ -1232,7 +1278,7 @@ int run_skia_app(const AppRenderFunc& app) {
     const int height = 600;
 
     SDL_Window* window = SDL_CreateWindow(
-        "Skia Reactive Demo",
+        "ReactCpp GUI Demo",
         width,
         height,
         SDL_WINDOW_RESIZABLE

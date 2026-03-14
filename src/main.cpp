@@ -16,7 +16,7 @@ Element AppRoot() {
     (
         text()
             .margin(6.0f)
-            .value(std::string("Skia Reactive UI Runtime, clicked for ") + std::to_string(counter.get()) + " times")
+            .value(std::string("ReactCpp GUI, clicked for ") + std::to_string(counter.get()) + " times")
             .text_size(30.0f)
             .text_color(0.12f, 0.15f, 0.24f),
 
@@ -24,7 +24,7 @@ Element AppRoot() {
             .margin(6.0f)
             .size(260.0f, 48.0f)
             .bg(0.25f, 0.52f, 0.93f)
-            .label("Skia Button")
+            .label("Test Button")
             .text_size(20.0f)
             .text_color(1.0f, 1.0f, 1.0f)
             .on_click([counter]() {

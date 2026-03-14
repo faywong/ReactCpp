@@ -289,8 +289,9 @@ Notes:
     - Left/Right arrow moves the caret by UTF-8 codepoint boundary.
     - Shift + Left/Right extends or shrinks the selection.
     - `Ctrl/Cmd + A` selects all committed text (`InputState::value`).
+    - `Ctrl/Cmd + Z` undo (multi-level) for text edits.
     - `Ctrl/Cmd + C/X/V` copy/cut/paste via SDL3 system clipboard.
-    - Selection is tracked logically (`sel_start/sel_end/sel_anchor/has_selection`) and rendered as a dark-blue highlight.
+    - Selection is tracked logically (`sel_start/sel_end/sel_anchor/has_selection`) and rendered as a dark-blue highlight with subtle rounded corners.
 
 ### Hit testing + event dispatch (generic)
 

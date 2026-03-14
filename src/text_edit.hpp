@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace reactcpp::text {
 
@@ -35,6 +37,51 @@ struct Selection {
     std::size_t start{0};
     std::size_t end{0};
     bool active{false};
+};
+
+struct UndoSnapshot {
+    std::string value;
+    std::size_t cursor{0};
+
+    std::size_t sel_start{0};
+    std::size_t sel_end{0};
+    std::size_t sel_anchor{0};
+    bool has_selection{false};
+
+    bool operator==(const UndoSnapshot&) const = default;
+};
+
+class UndoHistory {
+public:
+    explicit UndoHistory(std::size_t max_depth = 100) : max_depth_(max_depth) {}
+
+    void push(const UndoSnapshot& snap) {
+        if (max_depth_ == 0) return;
+        if (!stack_.empty() && stack_.back() == snap) return;
+        stack_.push_back(snap);
+        if (stack_.size() > max_depth_) {
+            stack_.erase(stack_.begin());
+        }
+    }
+
+    std::optional<UndoSnapshot> pop() {
+        if (stack_.empty()) return std::nullopt;
+        UndoSnapshot out = std::move(stack_.back());
+        stack_.pop_back();
+        return out;
+    }
+
+    void clear() {
+        stack_.clear();
+    }
+
+    std::size_t size() const {
+        return stack_.size();
+    }
+
+private:
+    std::size_t max_depth_{100};
+    std::vector<UndoSnapshot> stack_{};
 };
 
 inline Selection selection_from_anchor(std::size_t anchor, std::size_t cursor, std::size_t text_len) {
