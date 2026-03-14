@@ -176,6 +176,10 @@ struct InstanceNode {
         std::string value;
         std::size_t cursor{0};
         bool focused{false};
+
+        std::string preedit;
+        int preedit_start{-1};
+        int preedit_length{-1};
     };
     std::optional<InputState> input_state;
 };

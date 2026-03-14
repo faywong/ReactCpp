@@ -199,9 +199,10 @@ FRAME LOOP (run_skia_app)
              |    - Button click -> handler -> StateHandle<T>::set()/update()
              |                      -> HookDispatcher.request_update(ctx)
              |                      -> SkiaRuntime::request_update() -> update_requested_=true
-             |    - Text input/backspace -> handler mutates input state
-             |                          -> mark_dirty(focused_input_)
-             |                          -> request_update() -> update_requested_=true
+             |    - Text input (committed) / preedit composition / backspace
+             |        -> handler mutates input state (value / preedit)
+             |        -> mark_dirty(focused_input_)
+             |        -> request_update() -> update_requested_=true
              |    - Focus/layout changes -> mark_dirty(node)
              |                          -> (does NOT imply request_update by itself)
              v
@@ -227,6 +228,8 @@ FRAME LOOP (run_skia_app)
   +-------------------------------+
   | draw(canvas)                  |
   |  - Yoga layout + apply        |
+  |  - update SDL text input area |
+  |    (SDL_SetTextInputArea)     |
   |  - render_cached_node(root)   |
   +---------------+---------------+
                   |
@@ -247,7 +250,9 @@ request_update sources
   |
   +--> StateHandle<T>::set()/update() -> HookDispatcher.request_update(ctx)
   |
-  +--> Input handlers (text/backspace) -> mark_dirty + request_update()
+  +--> Input handlers (committed/preedit/backspace)
+  |       -> mark_dirty + request_update()
+  |       -> candidate window positioning via SDL_SetTextInputArea()
   |
   +--> Other internal mutations may call request_update() if visual output changes
   |
@@ -275,6 +280,11 @@ render_cached_node()
 
 Notes:
 - The VNodeTree is rebuilt by `app_render_()` inside `render_frame()`. Skipping `render_frame()` (when `update_requested_ == false`) is what avoids rebuilding the VNodeTree.
+- Input IME handling:
+  - `SDL_EVENT_TEXT_INPUT` inserts committed UTF-8 text into the focused Input's `InputState::value`.
+  - `SDL_EVENT_TEXT_EDITING` updates transient preedit/composition text (`InputState::preedit`), rendered underlined.
+  - Text input mode is focus-gated: `SDL_StartTextInput(window)` on Input focus; `SDL_ClearComposition` + `SDL_StopTextInput(window)` on blur.
+  - Candidate window positioning is updated after layout via `SDL_SetTextInputArea(window, rect, cursor_px)`.
 
 ### Hit testing + event dispatch (generic)
 
