@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -6,6 +5,8 @@
 
 #include "text_edit.hpp"
 #include "text_wrap.hpp"
+
+#include "test_util.hpp"
 
 static float measure_codepoints(std::string_view s) {
     float w = 0.0f;
@@ -19,7 +20,7 @@ static float measure_codepoints(std::string_view s) {
 
 static void expect_lines(std::string_view input, float max_width, const std::vector<std::string>& expected) {
     const auto lines = reactcpp::text::wrap_text(input, max_width, measure_codepoints);
-    assert(lines == expected);
+    REACTCPP_TEST_ASSERT(lines == expected);
 }
 
 static void expect_spans(std::string_view input, float max_width, const std::vector<std::string>& expected) {
@@ -27,11 +28,11 @@ static void expect_spans(std::string_view input, float max_width, const std::vec
     std::vector<std::string> got;
     got.reserve(spans.size());
     for (const auto& sp : spans) {
-        assert(sp.start <= sp.end);
-        assert(sp.end <= input.size());
+        REACTCPP_TEST_ASSERT(sp.start <= sp.end);
+        REACTCPP_TEST_ASSERT(sp.end <= input.size());
         got.emplace_back(std::string(input.substr(sp.start, sp.end - sp.start)));
     }
-    assert(got == expected);
+    REACTCPP_TEST_ASSERT(got == expected);
 }
 
 static void test_hard_breaks_on_newline() {
@@ -90,13 +91,13 @@ static void test_point_to_byte_index_in_wrapped_text_basic() {
     const float max_width = 5.0f;
     const float line_height = 10.0f;
 
-    assert(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 0.0f, 0.0f, line_height, 0.0f) == 0);
-    assert(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 2.0f, 0.0f, line_height, 0.0f) == 2);
-    assert(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 999.0f, 0.0f, line_height, 0.0f) == 5);
+    REACTCPP_TEST_ASSERT(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 0.0f, 0.0f, line_height, 0.0f) == 0);
+    REACTCPP_TEST_ASSERT(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 2.0f, 0.0f, line_height, 0.0f) == 2);
+    REACTCPP_TEST_ASSERT(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 999.0f, 0.0f, line_height, 0.0f) == 5);
 
-    assert(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 0.0f, line_height + 0.1f, line_height, 0.0f) == 6);
-    assert(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 3.0f, line_height + 0.1f, line_height, 0.0f) == 9);
-    assert(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 999.0f, line_height + 0.1f, line_height, 0.0f) == s.size());
+    REACTCPP_TEST_ASSERT(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 0.0f, line_height + 0.1f, line_height, 0.0f) == 6);
+    REACTCPP_TEST_ASSERT(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 3.0f, line_height + 0.1f, line_height, 0.0f) == 9);
+    REACTCPP_TEST_ASSERT(reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 999.0f, line_height + 0.1f, line_height, 0.0f) == s.size());
 }
 
 static void test_point_to_byte_index_in_wrapped_text_respects_scroll_y() {
@@ -105,12 +106,12 @@ static void test_point_to_byte_index_in_wrapped_text_respects_scroll_y() {
     const float line_height = 10.0f;
 
     const std::size_t caret = reactcpp::text::byte_index_for_wrapped_point(s, max_width, measure_codepoints, 1.0f, 0.0f, line_height, line_height);
-    assert(caret == 5);
+    REACTCPP_TEST_ASSERT(caret == 5);
 
     const auto word = reactcpp::text::word_selection_at(s, caret);
-    assert(word.active);
-    assert(word.start == 4);
-    assert(word.end == 7);
+    REACTCPP_TEST_ASSERT(word.active);
+    REACTCPP_TEST_ASSERT(word.start == 4);
+    REACTCPP_TEST_ASSERT(word.end == 7);
 }
 
 int main() {

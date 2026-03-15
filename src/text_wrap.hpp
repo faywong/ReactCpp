@@ -77,9 +77,13 @@ inline std::vector<WrappedSpan> wrap_text_spans(std::string_view text, float max
 
             std::size_t line_end = last_good;
             bool broke_on_space = false;
-            if (best_break != static_cast<std::size_t>(-1) && best_break > i && best_break <= last_good) {
-                line_end = best_break;
-                broke_on_space = best_break_is_space;
+            if (last_good < para_end && best_break != static_cast<std::size_t>(-1) && best_break > i && best_break <= last_good) {
+                const float w_best = measure(text.substr(i, best_break - i));
+                const float gap_ratio = max_width > 0.0f ? ((max_width - w_best) / max_width) : 0.0f;
+                if (gap_ratio <= 0.25f) {
+                    line_end = best_break;
+                    broke_on_space = best_break_is_space;
+                }
             }
 
             out.push_back(WrappedSpan{i, line_end});
@@ -210,9 +214,13 @@ inline std::vector<std::string> wrap_text(std::string_view text, float max_width
 
             std::size_t end = last_good;
             bool broke_on_space = false;
-            if (best_break != static_cast<std::size_t>(-1) && best_break > i && best_break <= last_good) {
-                end = best_break;
-                broke_on_space = best_break_is_space;
+            if (last_good < para.size() && best_break != static_cast<std::size_t>(-1) && best_break > i && best_break <= last_good) {
+                const float w_best = measure(para.substr(i, best_break - i));
+                const float gap_ratio = max_width > 0.0f ? ((max_width - w_best) / max_width) : 0.0f;
+                if (gap_ratio <= 0.25f) {
+                    end = best_break;
+                    broke_on_space = best_break_is_space;
+                }
             }
 
             out.emplace_back(std::string(para.substr(i, end - i)));
