@@ -280,23 +280,28 @@ render_cached_node()
 
 Notes:
 - The VNodeTree is rebuilt by `app_render_()` inside `render_frame()`. Skipping `render_frame()` (when `update_requested_ == false`) is what avoids rebuilding the VNodeTree.
-- Input IME handling:
-  - `SDL_EVENT_TEXT_INPUT` inserts committed UTF-8 text into the focused Input's `InputState::value`.
-  - `SDL_EVENT_TEXT_EDITING` updates transient preedit/composition text (`InputState::preedit`), rendered underlined.
-  - Text input mode is focus-gated: `SDL_StartTextInput(window)` on Input focus; `SDL_ClearComposition` + `SDL_StopTextInput(window)` on blur.
-  - Candidate window positioning is updated after layout via `SDL_SetTextInputArea(window, rect, cursor_px)`.
-  - Basic editor shortcuts are supported for the focused Input:
+- Input IME handling (editable nodes):
+  - The runtime has two editable host nodes:
+    - `Input` (single-line) — maintains a horizontal `scroll_x` so the caret stays visible when text exceeds view width.
+    - `InputArea` (multi-line) — wraps text when exceeding view width, supports Enter inserting `\n`, and maintains a vertical `scroll_y` so the caret stays visible.
+  - `SDL_EVENT_TEXT_INPUT` inserts committed UTF-8 text into the focused editable node's `EditableTextState::value`.
+  - `SDL_EVENT_TEXT_EDITING` updates transient preedit/composition text (`EditableTextState::preedit`), rendered underlined.
+  - Text input mode is focus-gated:
+    - The runtime starts SDL text input on editable focus (using `SDL_StartTextInputWithProperties` for `InputArea` multiline).
+    - It calls `SDL_ClearComposition` + `SDL_StopTextInput(window)` on blur.
+  - Candidate window positioning is updated after layout via `SDL_SetTextInputArea(window, rect, cursor_px)` (for `InputArea`, rect.y follows the caret line and accounts for `scroll_y`).
+  - Basic editor shortcuts are supported for the focused editable node:
     - Left/Right arrow moves the caret by UTF-8 codepoint boundary.
     - Shift + Left/Right extends or shrinks the selection.
-    - `Ctrl/Cmd + A` selects all committed text (`InputState::value`).
+    - `Ctrl/Cmd + A` selects all committed text (`EditableTextState::value`).
     - `Ctrl/Cmd + Z` undo (multi-level) for text edits.
     - `Ctrl/Cmd + C/X/V` copy/cut/paste via SDL3 system clipboard.
     - Selection is tracked logically (`sel_start/sel_end/sel_anchor/has_selection`) and rendered as a dark-blue highlight with subtle rounded corners.
-  - Mouse editing is supported for the focused Input:
+  - Mouse editing is supported for the focused editable node:
     - Single click places the caret at the clicked x position.
     - Drag with left mouse button selects a range (selection updates continuously; uses mouse capture).
     - Double click selects a word by natural script/punctuation runs (Latin/digits/underscore, CJK run, punctuation run).
-  - Text storage: `InputState::value` is backed by `reactcpp::text::TextBuffer` (gap backend by default), while SDL/Skia interop remains UTF-8.
+  - Text storage: `EditableTextState::value` is backed by `reactcpp::text::TextBuffer` (gap backend by default), while SDL/Skia interop remains UTF-8.
 
 ### Hit testing + event dispatch (generic)
 
