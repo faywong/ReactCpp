@@ -322,3 +322,6 @@ Notes:
 - Evolve `src/runtime.*` toward a clean Virtual/Instance/Render separation and add `use_state`-driven demos.
 - Introduce a minimal SkPicture cache at the widget level, then iterate into subtree caching.
 - Only consider a Zig-based runtime after the C++ design reaches clear limits in ergonomics or safety.
+
+## 代码提交规范
+- 请每次在特性分支/worktree 开发时，收到“提交代码”类请求时，自动将 feat 分支/worktree 合并到 main 分支。
