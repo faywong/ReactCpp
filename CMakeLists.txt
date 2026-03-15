@@ -11,12 +11,15 @@ enable_testing()
 
 include(FetchContent)
 
-# Skia + SDL3 Demo
-add_executable(reactcpp_demo
-    src/skia_runtime.hpp
-    src/skia_runtime.cpp
-    src/main.cpp
-)
+option(REACTCPP_BUILD_DEMO "Build SDL+Skia demo (requires external skia-builder)" ON)
+
+set(SKIA_BUILDER_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder")
+set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Path to skia-builder directory")
+
+if (REACTCPP_BUILD_DEMO AND NOT EXISTS "${SKIA_BUILDER_ROOT}")
+    message(WARNING "skia-builder not found at ${SKIA_BUILDER_ROOT}; demo target will be skipped")
+    set(REACTCPP_BUILD_DEMO OFF)
+endif()
 
 add_executable(react_cpp_text_edit_tests
     tests/text_edit_tests.cpp
@@ -29,13 +32,42 @@ target_include_directories(react_cpp_text_edit_tests
 
 add_test(NAME text_edit_tests COMMAND react_cpp_text_edit_tests)
 
-# Yoga (Flexbox layout)
-FetchContent_Declare(
-    yoga
-    GIT_REPOSITORY https://github.com/facebook/yoga.git
-    GIT_TAG v3.2.1
-    GIT_SHALLOW TRUE
+add_executable(react_cpp_text_wrap_tests
+    tests/text_wrap_tests.cpp
 )
+
+target_include_directories(react_cpp_text_wrap_tests
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+add_test(NAME text_wrap_tests COMMAND react_cpp_text_wrap_tests)
+
+if (REACTCPP_BUILD_DEMO)
+    add_executable(reactcpp_demo
+        src/skia_runtime.hpp
+        src/skia_runtime.cpp
+        src/main.cpp
+    )
+
+    add_executable(react_cpp_skia_runtime_input_area_enter_tests
+        tests/skia_runtime_input_area_enter_tests.cpp
+    )
+
+    target_include_directories(react_cpp_skia_runtime_input_area_enter_tests
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+
+    add_test(NAME skia_runtime_input_area_enter_tests COMMAND react_cpp_skia_runtime_input_area_enter_tests)
+
+    # Yoga (Flexbox layout)
+    FetchContent_Declare(
+        yoga
+        GIT_REPOSITORY https://github.com/facebook/yoga.git
+        GIT_TAG v3.2.1
+        GIT_SHALLOW TRUE
+    )
 FetchContent_GetProperties(yoga)
 if (NOT yoga_POPULATED)
     FetchContent_Populate(yoga)
@@ -44,65 +76,70 @@ endif()
 # Yoga's root CMakeLists always builds tests; add only the core subdir.
 add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
 
-# SDL discovery: pkg-config first, then CMake package targets
-set(REACTCPP_SDL_FOUND OFF)
-set(REACTCPP_SDL_INCLUDE_DIRS "")
-set(REACTCPP_SDL_CFLAGS_OTHER "")
-set(REACTCPP_SDL_LIBRARIES "")
-set(REACTCPP_SDL_IMPORTED_TARGET "")
+    # SDL discovery: pkg-config first, then CMake package targets
+    set(REACTCPP_SDL_FOUND OFF)
+    set(REACTCPP_SDL_INCLUDE_DIRS "")
+    set(REACTCPP_SDL_CFLAGS_OTHER "")
+    set(REACTCPP_SDL_LIBRARIES "")
+    set(REACTCPP_SDL_IMPORTED_TARGET "")
 
-find_package(PkgConfig QUIET)
-if (PkgConfig_FOUND)
-    pkg_check_modules(SDL3 QUIET sdl3)
-    if (SDL3_FOUND)
-        set(REACTCPP_SDL_FOUND ON)
-        set(REACTCPP_SDL_INCLUDE_DIRS ${SDL3_INCLUDE_DIRS})
-        set(REACTCPP_SDL_CFLAGS_OTHER ${SDL3_CFLAGS_OTHER})
-        set(REACTCPP_SDL_LIBRARIES ${SDL3_LIBRARIES})
-    else()
-        pkg_check_modules(SDL2 QUIET sdl2)
-        if (SDL2_FOUND)
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(SDL3 QUIET sdl3)
+        if (SDL3_FOUND)
             set(REACTCPP_SDL_FOUND ON)
-            set(REACTCPP_SDL_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
-            set(REACTCPP_SDL_CFLAGS_OTHER ${SDL2_CFLAGS_OTHER})
-            set(REACTCPP_SDL_LIBRARIES ${SDL2_LIBRARIES})
+            set(REACTCPP_SDL_INCLUDE_DIRS ${SDL3_INCLUDE_DIRS})
+            set(REACTCPP_SDL_CFLAGS_OTHER ${SDL3_CFLAGS_OTHER})
+            set(REACTCPP_SDL_LIBRARIES ${SDL3_LIBRARIES})
+        else()
+            pkg_check_modules(SDL2 QUIET sdl2)
+            if (SDL2_FOUND)
+                set(REACTCPP_SDL_FOUND ON)
+                set(REACTCPP_SDL_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
+                set(REACTCPP_SDL_CFLAGS_OTHER ${SDL2_CFLAGS_OTHER})
+                set(REACTCPP_SDL_LIBRARIES ${SDL2_LIBRARIES})
+            endif()
         endif()
     endif()
-endif()
 
-if (NOT REACTCPP_SDL_FOUND)
-    find_package(SDL3 QUIET CONFIG)
-    if (TARGET SDL3::SDL3)
-        set(REACTCPP_SDL_FOUND ON)
-        set(REACTCPP_SDL_IMPORTED_TARGET SDL3::SDL3)
+    if (NOT REACTCPP_SDL_FOUND)
+        find_package(SDL3 QUIET CONFIG)
+        if (TARGET SDL3::SDL3)
+            set(REACTCPP_SDL_FOUND ON)
+            set(REACTCPP_SDL_IMPORTED_TARGET SDL3::SDL3)
+        endif()
     endif()
-endif()
 
-if (NOT REACTCPP_SDL_FOUND)
-    find_package(SDL2 QUIET CONFIG)
-    if (TARGET SDL2::SDL2)
-        set(REACTCPP_SDL_FOUND ON)
-        set(REACTCPP_SDL_IMPORTED_TARGET SDL2::SDL2)
+    if (NOT REACTCPP_SDL_FOUND)
+        find_package(SDL2 QUIET CONFIG)
+        if (TARGET SDL2::SDL2)
+            set(REACTCPP_SDL_FOUND ON)
+            set(REACTCPP_SDL_IMPORTED_TARGET SDL2::SDL2)
+        endif()
     endif()
-endif()
 
-if (NOT REACTCPP_SDL_FOUND)
-    # Manual fallback (common on distros without pkg-config .pc files)
-    find_path(SDL2_INCLUDE_DIR NAMES SDL2/SDL.h)
-    find_library(SDL2_LIBRARY NAMES SDL2 SDL2-2.0)
-    if (SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
-        set(REACTCPP_SDL_FOUND ON)
-        set(REACTCPP_SDL_INCLUDE_DIRS "${SDL2_INCLUDE_DIR}")
-        set(REACTCPP_SDL_LIBRARIES "${SDL2_LIBRARY}")
+    if (NOT REACTCPP_SDL_FOUND)
+        # Manual fallback (common on distros without pkg-config .pc files)
+        find_path(SDL2_INCLUDE_DIR NAMES SDL2/SDL.h)
+        find_library(SDL2_LIBRARY NAMES SDL2 SDL2-2.0)
+        if (SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
+            set(REACTCPP_SDL_FOUND ON)
+            set(REACTCPP_SDL_INCLUDE_DIRS "${SDL2_INCLUDE_DIR}")
+            set(REACTCPP_SDL_LIBRARIES "${SDL2_LIBRARY}")
+        endif()
     endif()
-endif()
 
-if (NOT REACTCPP_SDL_FOUND)
-    message(FATAL_ERROR "Neither SDL3 nor SDL2 was found (tried pkg-config, CMake package config, and manual find_path/find_library). Install SDL2 development headers/libs or set CMAKE_PREFIX_PATH/PKG_CONFIG_PATH accordingly.")
-endif()
+    if (NOT REACTCPP_SDL_FOUND)
+        message(FATAL_ERROR "Neither SDL3 nor SDL2 was found (tried pkg-config, CMake package config, and manual find_path/find_library). Install SDL2 development headers/libs or set CMAKE_PREFIX_PATH/PKG_CONFIG_PATH accordingly.")
+    endif()
 
 if (REACTCPP_SDL_INCLUDE_DIRS)
     target_include_directories(reactcpp_demo
+        PRIVATE
+            ${REACTCPP_SDL_INCLUDE_DIRS}
+    )
+
+    target_include_directories(react_cpp_skia_runtime_input_area_enter_tests
         PRIVATE
             ${REACTCPP_SDL_INCLUDE_DIRS}
     )
@@ -113,10 +150,20 @@ if (REACTCPP_SDL_CFLAGS_OTHER)
         PRIVATE
             ${REACTCPP_SDL_CFLAGS_OTHER}
     )
+
+    target_compile_options(react_cpp_skia_runtime_input_area_enter_tests
+        PRIVATE
+            ${REACTCPP_SDL_CFLAGS_OTHER}
+    )
 endif()
 
 if (REACTCPP_SDL_IMPORTED_TARGET)
     target_link_libraries(reactcpp_demo
+        PRIVATE
+            ${REACTCPP_SDL_IMPORTED_TARGET}
+    )
+
+    target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
         PRIVATE
             ${REACTCPP_SDL_IMPORTED_TARGET}
     )
@@ -125,20 +172,18 @@ else()
         PRIVATE
             ${REACTCPP_SDL_LIBRARIES}
     )
+
+    target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
+        PRIVATE
+            ${REACTCPP_SDL_LIBRARIES}
+    )
 endif()
 
-# Skia: headers + static libraries
-set(SKIA_BUILDER_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder")
-set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Path to skia-builder directory")
-
-if (NOT EXISTS "${SKIA_BUILDER_ROOT}")
-    message(FATAL_ERROR "skia-builder 目录不存在，请 clone https://github.com/fonttools/skia-builder/ 项目运行其中的 build.sh 编译通过，之后为 cmake 命令行指定 -DSKIA_BUILDER_ROOT=/path/to/your/skia-builder")
-endif()
-
-set(SKIA_ROOT "${SKIA_BUILDER_ROOT}/skia")
-set(SKIA_LIB_DIR "${SKIA_BUILDER_ROOT}/build")
-set(SKIA_LIB_PATH "${SKIA_LIB_DIR}/libskia.a" CACHE FILEPATH "Path to Skia static library (libskia.a)")
-set(SKIA_SKCMS_LIB_PATH "${SKIA_LIB_DIR}/libskcms.a" CACHE FILEPATH "Path to skcms static library (libskcms.a), if present")
+    # Skia: headers + static libraries
+    set(SKIA_ROOT "${SKIA_BUILDER_ROOT}/skia")
+    set(SKIA_LIB_DIR "${SKIA_BUILDER_ROOT}/build")
+    set(SKIA_LIB_PATH "${SKIA_LIB_DIR}/libskia.a" CACHE FILEPATH "Path to Skia static library (libskia.a)")
+    set(SKIA_SKCMS_LIB_PATH "${SKIA_LIB_DIR}/libskcms.a" CACHE FILEPATH "Path to skcms static library (libskcms.a), if present")
 
 if (NOT EXISTS "${SKIA_LIB_PATH}")
     message(FATAL_ERROR "Skia static library not found at ${SKIA_LIB_PATH}")
@@ -154,7 +199,18 @@ target_include_directories(reactcpp_demo
         "${SKIA_ROOT}"
 )
 
+target_include_directories(react_cpp_skia_runtime_input_area_enter_tests
+    PRIVATE
+        "${SKIA_ROOT}/include"
+        "${SKIA_ROOT}"
+)
+
 target_link_libraries(reactcpp_demo
+    PRIVATE
+        "${SKIA_LIB_PATH}"
+)
+
+target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
     PRIVATE
         "${SKIA_LIB_PATH}"
 )
@@ -162,6 +218,11 @@ target_link_libraries(reactcpp_demo
 # Some Skia builds require skcms as a separate static lib.
 if (EXISTS "${SKIA_SKCMS_LIB_PATH}")
     target_link_libraries(reactcpp_demo
+        PRIVATE
+            "${SKIA_SKCMS_LIB_PATH}"
+    )
+
+    target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
         PRIVATE
             "${SKIA_SKCMS_LIB_PATH}"
     )
@@ -185,7 +246,21 @@ if (PkgConfig_FOUND)
                 ${HARFBUZZ_INCLUDE_DIRS}
         )
 
+        target_include_directories(react_cpp_skia_runtime_input_area_enter_tests
+            PRIVATE
+                ${FREETYPE2_INCLUDE_DIRS}
+                ${FONTCONFIG_INCLUDE_DIRS}
+                ${HARFBUZZ_INCLUDE_DIRS}
+        )
+
         target_compile_options(reactcpp_demo
+            PRIVATE
+                ${FREETYPE2_CFLAGS_OTHER}
+                ${FONTCONFIG_CFLAGS_OTHER}
+                ${HARFBUZZ_CFLAGS_OTHER}
+        )
+
+        target_compile_options(react_cpp_skia_runtime_input_area_enter_tests
             PRIVATE
                 ${FREETYPE2_CFLAGS_OTHER}
                 ${FONTCONFIG_CFLAGS_OTHER}
@@ -195,6 +270,15 @@ if (PkgConfig_FOUND)
         # NOTE: link order matters for static libs: dependents first, dependencies after.
         # fontconfig can depend on freetype, so keep fontconfig before freetype.
         target_link_libraries(reactcpp_demo
+            PRIVATE
+                ${FONTCONFIG_LIBRARIES}
+                ${FREETYPE2_LIBRARIES}
+                ${HARFBUZZ_LIBRARIES}
+                m
+                dl
+        )
+
+        target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
             PRIVATE
                 ${FONTCONFIG_LIBRARIES}
                 ${FREETYPE2_LIBRARIES}
@@ -212,3 +296,11 @@ target_link_libraries(reactcpp_demo
         Threads::Threads
         yogacore
 )
+
+target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
+    PRIVATE
+        Threads::Threads
+        yogacore
+)
+
+endif()
