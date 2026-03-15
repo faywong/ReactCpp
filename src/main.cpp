@@ -44,6 +44,29 @@ Element AppRoot() {
             .bg(1.0f, 1.0f, 1.0f)
             .placeholder("Click to focus, type text, backspace works")
             .value("")
+
+        ,
+        text()
+            .margin(6.0f)
+            .value("Editable InputArea (wrap + scroll + Enter newline):")
+            .text_size(18.0f)
+
+        ,
+        input_area()
+            .margin(6.0f)
+            .size(380.0f, 220.0f)
+            .bg(1.0f, 1.0f, 1.0f)
+            .border_color(0.70f, 0.70f, 0.70f)
+            .text_size(16.0f)
+            .text_color(0.10f, 0.10f, 0.10f)
+            .placeholder("Click to focus; Enter inserts newline; mouse drag selects; wheel scrolls")
+            .value(
+                "A very long line to test wrapping: The_quick_brown_fox_jumps_over_the_lazy_dog_0123456789_" \
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz\n"
+                "Line 2: 中文换行测试：这是一段很长很长的中文文本，用来验证在超过宽度之后是否会自动换行，并且光标、选区依然正确。\n"
+                "Line 3: Try selecting across wrapped lines, then press Backspace.\n"
+                "Line 4: Scroll with mouse wheel when content exceeds the view height."
+            )
     );
 }
 
