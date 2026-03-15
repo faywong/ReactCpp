@@ -334,6 +334,100 @@ public:
     }
 };
 
+class InputAreaNode final : public ViewLikeNode<InputAreaNode, InputAreaProps> {
+public:
+    InputAreaNode& value(std::string v) & {
+        props_.value = std::move(v);
+        return *this;
+    }
+    InputAreaNode&& value(std::string v) && {
+        props_.value = std::move(v);
+        return std::move(*this);
+    }
+
+    InputAreaNode& placeholder(std::string v) & {
+        props_.placeholder = std::move(v);
+        return *this;
+    }
+    InputAreaNode&& placeholder(std::string v) && {
+        props_.placeholder = std::move(v);
+        return std::move(*this);
+    }
+
+    InputAreaNode& text_size(float v) & {
+        props_.text_size = v;
+        return *this;
+    }
+    InputAreaNode&& text_size(float v) && {
+        props_.text_size = v;
+        return std::move(*this);
+    }
+
+    InputAreaNode& text_color(float r, float g, float b) & {
+        props_.text_r = r;
+        props_.text_g = g;
+        props_.text_b = b;
+        return *this;
+    }
+    InputAreaNode&& text_color(float r, float g, float b) && {
+        props_.text_r = r;
+        props_.text_g = g;
+        props_.text_b = b;
+        return std::move(*this);
+    }
+
+    InputAreaNode& border_color(float r, float g, float b) & {
+        props_.border_r = r;
+        props_.border_g = g;
+        props_.border_b = b;
+        return *this;
+    }
+    InputAreaNode&& border_color(float r, float g, float b) && {
+        props_.border_r = r;
+        props_.border_g = g;
+        props_.border_b = b;
+        return std::move(*this);
+    }
+
+    InputAreaNode& add(Element child) & {
+        children_.push_back(std::move(child));
+        return *this;
+    }
+    InputAreaNode&& add(Element child) && {
+        children_.push_back(std::move(child));
+        return std::move(*this);
+    }
+
+    template <ElementConvertible... Children>
+    InputAreaNode& operator()(Children&&... children) & {
+        children_.clear();
+        children_.reserve(sizeof...(Children));
+        (children_.push_back(static_cast<Element>(std::forward<Children>(children))), ...);
+        return *this;
+    }
+
+    template <ElementConvertible... Children>
+    InputAreaNode&& operator()(Children&&... children) && {
+        children_.clear();
+        children_.reserve(sizeof...(Children));
+        (children_.push_back(static_cast<Element>(std::forward<Children>(children))), ...);
+        return std::move(*this);
+    }
+
+    Element build() const & {
+        return InputArea(props_, children_);
+    }
+    Element build() && {
+        return InputArea(props_, std::move(children_));
+    }
+    operator Element() && {
+        return std::move(*this).build();
+    }
+
+private:
+    std::vector<Element> children_{};
+};
+
 class ViewNode final : public ViewLikeNode<ViewNode, ViewProps> {
 public:
     ViewNode& add(Element child) & {
@@ -389,6 +483,10 @@ inline ButtonNode button() {
 
 inline InputNode input() {
     return InputNode{};
+}
+
+inline InputAreaNode input_area() {
+    return InputAreaNode{};
 }
 
 }

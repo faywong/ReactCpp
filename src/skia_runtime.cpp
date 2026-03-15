@@ -10,8 +10,9 @@
 #include <vector>
 
 #include "text_edit.hpp"
+#include "text_wrap.hpp"
 
-#include "yoga_shim.hpp"
+#include <yoga/Yoga.h>
 
 #include "core/SkCanvas.h"
 #include "core/SkColor.h"
@@ -45,6 +46,7 @@
 #define REACTCPP_SDL_EVENT_TEXT_INPUT SDL_EVENT_TEXT_INPUT
 #define REACTCPP_SDL_EVENT_TEXT_EDITING SDL_EVENT_TEXT_EDITING
 #define REACTCPP_SDL_EVENT_KEY_DOWN SDL_EVENT_KEY_DOWN
+#define REACTCPP_SDL_EVENT_MOUSE_WHEEL SDL_EVENT_MOUSE_WHEEL
 
 thread_local HookDispatcher g_skia_dispatcher;
 
@@ -104,7 +106,7 @@ static SkScalar baseline_for_centered_text(const SkFont& font, SkScalar box_heig
     return (box_height - text_height) * 0.5f - metrics.fAscent;
 }
 
-static reactcpp::text::Selection selection_from(const InstanceNode::InputState& s) {
+static reactcpp::text::Selection selection_from(const InstanceNode::EditableTextState& s) {
     reactcpp::text::Selection sel;
     sel.active = s.has_selection;
     sel.start = s.sel_start;
@@ -113,32 +115,32 @@ static reactcpp::text::Selection selection_from(const InstanceNode::InputState& 
     return sel;
 }
 
-static void selection_to(InstanceNode::InputState& s, const reactcpp::text::Selection& sel) {
+static void selection_to(InstanceNode::EditableTextState& s, const reactcpp::text::Selection& sel) {
     s.sel_start = std::min(sel.start, s.value.size());
     s.sel_end = std::min(sel.end, s.value.size());
     s.has_selection = sel.active && s.sel_start < s.sel_end;
 }
 
-static void clear_selection(InstanceNode::InputState& s) {
+static void clear_selection(InstanceNode::EditableTextState& s) {
     s.sel_start = 0;
     s.sel_end = 0;
     s.sel_anchor = 0;
     s.has_selection = false;
 }
 
-static void clear_selection_keep_anchor(InstanceNode::InputState& s) {
+static void clear_selection_keep_anchor(InstanceNode::EditableTextState& s) {
     s.sel_start = 0;
     s.sel_end = 0;
     s.has_selection = false;
 }
 
-static void clear_preedit(InstanceNode::InputState& s) {
+static void clear_preedit(InstanceNode::EditableTextState& s) {
     s.preedit.clear();
     s.preedit_start = -1;
     s.preedit_length = -1;
 }
 
-static reactcpp::text::UndoSnapshot snapshot_from_input(const InstanceNode::InputState& s) {
+static reactcpp::text::UndoSnapshot snapshot_from_input(const InstanceNode::EditableTextState& s) {
     reactcpp::text::UndoSnapshot snap;
     snap.value = s.value.to_string();
     snap.cursor = s.cursor;
@@ -149,7 +151,7 @@ static reactcpp::text::UndoSnapshot snapshot_from_input(const InstanceNode::Inpu
     return snap;
 }
 
-static void apply_snapshot(InstanceNode::InputState& s, const reactcpp::text::UndoSnapshot& snap) {
+static void apply_snapshot(InstanceNode::EditableTextState& s, const reactcpp::text::UndoSnapshot& snap) {
     s.value.set_string(snap.value);
     s.cursor = std::min(snap.cursor, s.value.size());
     s.sel_start = std::min(snap.sel_start, s.value.size());
@@ -167,7 +169,7 @@ public:
 class ViewRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext&) const override {
-        const auto& props = std::get<ViewProps>(node.current_vnode.props);
+        const auto& props = props_as_view_ref(node.current_vnode);
         const LayoutRect r = layout_for_node(node);
         SkPaint fill;
         fill.setColor(make_color(props.bg_r, props.bg_g, props.bg_b, props.bg_a));
@@ -220,9 +222,10 @@ public:
         const auto& props = std::get<InputProps>(node.current_vnode.props);
         const LayoutRect r = layout_for_node(node);
 
-        const std::string value = node.input_state ? node.input_state->value.to_string() : props.value;
-        const bool composing = node.focused && node.input_state && !node.input_state->preedit.empty();
-        const std::string preedit = composing ? node.input_state->preedit : std::string();
+        const std::string value = node.editable_state ? node.editable_state->value.to_string() : props.value;
+        const bool composing = node.focused && node.editable_state && !node.editable_state->preedit.empty();
+        const std::string preedit = composing ? node.editable_state->preedit : std::string();
+        const float scroll_x = node.editable_state ? node.editable_state->scroll_x : 0.0f;
 
         SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
         SkPaint fill;
@@ -241,19 +244,36 @@ public:
         font.setTypeface(pick_typeface(ctx.font_mgr));
         const float text_y = baseline_for_centered_text(font, r.height);
 
+        const float pad_x = 8.0f;
+        const float pad_y = 8.0f;
+        const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
+        const float content_h = std::max(r.height - pad_y * 2.0f, 1.0f);
+        const SkRect content_rect = SkRect::MakeXYWH(pad_x, pad_y, content_w, content_h);
+
         const bool showing_placeholder = value.empty() && preedit.empty() && !props.placeholder.empty();
+
+        const float draw_scroll_x = showing_placeholder ? 0.0f : scroll_x;
+
+        canvas->save();
+        SkRRect clip_rr;
+        clip_rr.setRectXY(bounds, 6.0f, 6.0f);
+        canvas->clipRRect(clip_rr, true);
+        canvas->clipRect(content_rect, true);
+        canvas->translate(-draw_scroll_x, 0.0f);
+
         if (showing_placeholder) {
             SkPaint paint;
             paint.setColor(make_color(0.55f, 0.55f, 0.55f));
             canvas->drawString(props.placeholder.c_str(), text_x, text_y, font, paint);
+            canvas->restore();
             return;
         }
 
         SkPaint paint;
         paint.setColor(make_color(props.text_r, props.text_g, props.text_b));
 
-        if (!preedit.empty() && node.input_state) {
-            const std::size_t cursor = std::min(node.input_state->cursor, value.size());
+        if (!preedit.empty() && node.editable_state) {
+            const std::size_t cursor = std::min(node.editable_state->cursor, value.size());
             const std::string left = value.substr(0, cursor);
             const std::string right = value.substr(cursor);
 
@@ -273,9 +293,9 @@ public:
             x += preedit_w;
             canvas->drawString(right.c_str(), x, text_y, font, paint);
         } else {
-            if (node.input_state && node.input_state->has_selection && node.input_state->sel_start < node.input_state->sel_end) {
-                const std::size_t start = std::min(node.input_state->sel_start, value.size());
-                const std::size_t end = std::min(node.input_state->sel_end, value.size());
+            if (node.editable_state && node.editable_state->has_selection && node.editable_state->sel_start < node.editable_state->sel_end) {
+                const std::size_t start = std::min(node.editable_state->sel_start, value.size());
+                const std::size_t end = std::min(node.editable_state->sel_end, value.size());
 
                 const std::string left = value.substr(0, start);
                 const std::string mid = value.substr(start, end - start);
@@ -320,6 +340,174 @@ public:
                 canvas->drawString(value.c_str(), text_x, text_y, font, paint);
             }
         }
+
+        canvas->restore();
+    }
+};
+
+class InputAreaRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<InputAreaProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+
+        const float scroll_y = node.editable_state ? node.editable_state->scroll_y : 0.0f;
+
+        const std::string value = node.editable_state ? node.editable_state->value.to_string() : props.value;
+        const bool composing = node.focused && node.editable_state && !node.editable_state->preedit.empty();
+        const std::string preedit = composing ? node.editable_state->preedit : std::string();
+
+        SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
+        SkPaint fill;
+        fill.setColor(make_color(props.bg_r, props.bg_g, props.bg_b, props.bg_a));
+        canvas->drawRoundRect(bounds, 6.0f, 6.0f, fill);
+
+        SkPaint border;
+        border.setStyle(SkPaint::kStroke_Style);
+        border.setStrokeWidth(2.0f);
+        border.setColor(make_color(props.border_r, props.border_g, props.border_b));
+        canvas->drawRoundRect(bounds, 6.0f, 6.0f, border);
+
+        const float pad_x = 8.0f;
+        const float pad_y = 8.0f;
+        const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
+        const float content_h = std::max(r.height - pad_y * 2.0f, 1.0f);
+        const SkRect content_rect = SkRect::MakeXYWH(pad_x, pad_y, content_w, content_h);
+
+        SkFont font;
+        font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkFontMetrics metrics;
+        font.getMetrics(&metrics);
+        const float line_height = props.text_size * 1.4f;
+
+        auto measure = [&](std::string_view s) -> float {
+            return font.measureText(s.data(), s.size(), SkTextEncoding::kUTF8);
+        };
+
+        const bool showing_placeholder = value.empty() && preedit.empty() && !props.placeholder.empty();
+        const std::string display_text = [&]() {
+            if (!composing || !node.editable_state) return value;
+            const std::size_t cursor = std::min(node.editable_state->cursor, value.size());
+            return value.substr(0, cursor) + preedit + value.substr(cursor);
+        }();
+
+        const std::string_view to_wrap = showing_placeholder ? std::string_view(props.placeholder) : std::string_view(display_text);
+        const auto spans = reactcpp::text::wrap_text_spans(to_wrap, content_w, measure);
+
+        SkPaint paint;
+        paint.setColor(showing_placeholder ? make_color(0.55f, 0.55f, 0.55f)
+                                           : make_color(props.text_r, props.text_g, props.text_b));
+
+        canvas->save();
+        SkRRect clip_rr;
+        clip_rr.setRectXY(bounds, 6.0f, 6.0f);
+        canvas->clipRRect(clip_rr, true);
+        canvas->clipRect(content_rect, true);
+        canvas->translate(0.0f, -scroll_y);
+
+        if (!showing_placeholder && !composing && node.editable_state
+            && node.editable_state->has_selection && node.editable_state->sel_start < node.editable_state->sel_end) {
+            const std::size_t sel_start = std::min(node.editable_state->sel_start, value.size());
+            const std::size_t sel_end = std::min(node.editable_state->sel_end, value.size());
+
+            SkPaint highlight;
+            highlight.setColor(static_cast<SkColor>(0xFF1E3A8A));
+            highlight.setAntiAlias(true);
+            highlight.setStyle(SkPaint::kFill_Style);
+
+            for (std::size_t line = 0; line < spans.size(); ++line) {
+                const auto& sp = spans[line];
+                const std::size_t line_start = sp.start;
+                const std::size_t line_end = sp.end;
+
+                const std::size_t inter_start = std::max(line_start, sel_start);
+                const std::size_t inter_end = std::min(line_end, sel_end);
+                if (inter_start >= inter_end) continue;
+
+                const float baseline = pad_y + static_cast<float>(line) * line_height - metrics.fAscent;
+                const float left_w = measure(to_wrap.substr(line_start, inter_start - line_start));
+                const float mid_w = measure(to_wrap.substr(inter_start, inter_end - inter_start));
+
+                const float x0 = pad_x + left_w;
+                const float x1 = x0 + mid_w;
+                const float top = baseline + metrics.fAscent - 1.0f;
+                const float bottom = baseline + metrics.fDescent + 1.0f;
+
+                canvas->drawRoundRect(SkRect::MakeLTRB(x0, top, x1, bottom), 2.0f, 2.0f, highlight);
+            }
+        }
+
+        SkPaint selected_paint = paint;
+        selected_paint.setColor(SK_ColorWHITE);
+
+        const std::size_t preedit_begin = (composing && node.editable_state)
+            ? std::min(node.editable_state->cursor, value.size())
+            : 0;
+        const std::size_t preedit_end = (composing && node.editable_state)
+            ? (preedit_begin + preedit.size())
+            : 0;
+
+        SkPaint underline;
+        underline.setAntiAlias(true);
+        underline.setColor(make_color(props.text_r, props.text_g, props.text_b));
+        underline.setStrokeWidth(1.5f);
+
+        const bool draw_selection_overlay = !showing_placeholder && !composing && node.editable_state
+            && node.editable_state->has_selection && node.editable_state->sel_start < node.editable_state->sel_end;
+        const std::size_t sel_start = (draw_selection_overlay && node.editable_state)
+            ? std::min(node.editable_state->sel_start, value.size())
+            : 0;
+        const std::size_t sel_end = (draw_selection_overlay && node.editable_state)
+            ? std::min(node.editable_state->sel_end, value.size())
+            : 0;
+
+        for (std::size_t line = 0; line < spans.size(); ++line) {
+            const auto& sp = spans[line];
+            const float baseline = pad_y + static_cast<float>(line) * line_height - metrics.fAscent;
+
+            const float line_top = baseline + metrics.fAscent;
+            const float line_bottom = baseline + metrics.fDescent;
+            if (line_bottom < scroll_y - line_height) {
+                continue;
+            }
+            if (line_top > scroll_y + content_h + line_height) {
+                break;
+            }
+
+            const std::string_view line_sv = to_wrap.substr(sp.start, sp.end - sp.start);
+            std::string line_str(line_sv);
+            canvas->drawString(line_str.c_str(), pad_x, baseline, font, paint);
+
+            if (!showing_placeholder && composing && !preedit.empty()) {
+                const std::size_t line_start = sp.start;
+                const std::size_t line_end = sp.end;
+                const std::size_t inter_start = std::max(line_start, preedit_begin);
+                const std::size_t inter_end = std::min(line_end, preedit_end);
+                if (inter_start < inter_end) {
+                    const float left_w = measure(to_wrap.substr(line_start, inter_start - line_start));
+                    const float mid_w = measure(to_wrap.substr(inter_start, inter_end - inter_start));
+                    const float x0 = pad_x + left_w;
+                    canvas->drawLine(x0, baseline + 2.0f, x0 + mid_w, baseline + 2.0f, underline);
+                }
+            }
+
+            if (draw_selection_overlay) {
+                const std::size_t line_start = sp.start;
+                const std::size_t line_end = sp.end;
+                const std::size_t inter_start = std::max(line_start, sel_start);
+                const std::size_t inter_end = std::min(line_end, sel_end);
+                if (inter_start < inter_end) {
+                    const float left_w = measure(to_wrap.substr(line_start, inter_start - line_start));
+                    const std::string_view mid_sv = to_wrap.substr(inter_start, inter_end - inter_start);
+                    std::string mid_str(mid_sv);
+                    canvas->drawString(mid_str.c_str(), pad_x + left_w, baseline, font, selected_paint);
+                }
+            }
+        }
+
+        canvas->restore();
     }
 };
 
@@ -328,11 +516,13 @@ static const ElementRenderer& renderer_for(TypeId type) {
     static ButtonRenderer button_renderer;
     static TextRenderer text_renderer;
     static InputRenderer input_renderer;
+    static InputAreaRenderer input_area_renderer;
 
     if (type == host_type_view()) return view_renderer;
     if (type == host_type_button()) return button_renderer;
     if (type == host_type_text()) return text_renderer;
     if (type == host_type_input()) return input_renderer;
+    if (type == host_type_input_area()) return input_area_renderer;
     return view_renderer;
 }
 
@@ -561,9 +751,11 @@ public:
 
         InstanceNode* hit = hit_test_at(root_instance_, x, y);
         InstanceNode* hit_input = find_ancestor_by_type(hit, host_type_input());
-        set_focus(hit_input ? hit_input : hit);
+        InstanceNode* hit_input_area = find_ancestor_by_type(hit, host_type_input_area());
+        InstanceNode* hit_editable = hit_input ? hit_input : hit_input_area;
+        set_focus(hit_editable ? hit_editable : hit);
 
-        if (!hit_input || !hit_input->input_state) {
+        if (!hit_editable || !hit_editable->editable_state) {
             mouse_selecting_ = false;
             mouse_select_target_ = nullptr;
             if (window_) {
@@ -575,25 +767,58 @@ public:
             return;
         }
 
-        if (hit_input != focused_input_) {
+        if (hit_editable != focused_input_) {
             return;
         }
 
-        auto& state = *focused_input_->input_state;
+        auto& state = *focused_input_->editable_state;
         if (!state.preedit.empty()) {
             return;
         }
 
-        const auto& props = std::get<InputProps>(focused_input_->current_vnode.props);
-        SkFont font;
-        font.setSize(props.text_size);
-        font.setTypeface(pick_typeface(font_mgr_));
-
         float abs_x = 0.0f;
         float abs_y = 0.0f;
         absolute_origin_for(focused_input_, abs_x, abs_y);
-        const float local_x = (x - abs_x) - 8.0f;
-        const std::size_t caret = byte_index_for_x(state.value.view(), local_x, font);
+
+        std::size_t caret = 0;
+        if (focused_input_->type == host_type_input()) {
+            const auto& props = std::get<InputProps>(focused_input_->current_vnode.props);
+            SkFont font;
+            font.setSize(props.text_size);
+            font.setTypeface(pick_typeface(font_mgr_));
+            const float local_x = (x - abs_x) - 8.0f + state.scroll_x;
+            caret = byte_index_for_x(state.value.view(), local_x, font);
+        } else if (focused_input_->type == host_type_input_area()) {
+            const auto& props = std::get<InputAreaProps>(focused_input_->current_vnode.props);
+            const LayoutRect r = layout_for_node(*focused_input_);
+
+            SkFont font;
+            font.setSize(props.text_size);
+            font.setTypeface(pick_typeface(font_mgr_));
+            const float line_height = props.text_size * 1.4f;
+
+            const float pad_x = 8.0f;
+            const float pad_y = 8.0f;
+            const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
+            const float local_x = (x - abs_x) - pad_x;
+            const float local_y = (y - abs_y) - pad_y;
+
+            auto measure = [&](std::string_view sv) -> float {
+                return font.measureText(sv.data(), sv.size(), SkTextEncoding::kUTF8);
+            };
+
+            caret = reactcpp::text::byte_index_for_wrapped_point(
+                state.value.view(),
+                content_w,
+                measure,
+                local_x,
+                local_y,
+                line_height,
+                state.scroll_y
+            );
+        } else {
+            return;
+        }
 
         if (clicks >= 2) {
             const auto word = reactcpp::text::word_selection_at(state.value.view(), caret);
@@ -608,6 +833,12 @@ public:
             state.sel_anchor = caret;
         }
 
+        if (focused_input_->type == host_type_input_area()) {
+            ensure_input_area_caret_visible(*focused_input_);
+        } else if (focused_input_->type == host_type_input()) {
+            ensure_input_caret_visible(*focused_input_);
+        }
+
         mouse_selecting_ = true;
         mouse_select_target_ = focused_input_;
         if (window_) {
@@ -618,30 +849,67 @@ public:
     }
 
     void handle_mouse_move(float win_x, float win_y) {
-        if (!mouse_selecting_ || !mouse_select_target_ || !mouse_select_target_->input_state) return;
-        auto& state = *mouse_select_target_->input_state;
+        if (!mouse_selecting_ || !mouse_select_target_ || !mouse_select_target_->editable_state) return;
+        auto& state = *mouse_select_target_->editable_state;
         if (!state.preedit.empty()) return;
 
         float x = win_x;
         float y = win_y;
         window_to_surface(x, y);
 
-        (void)y;
-        const auto& props = std::get<InputProps>(mouse_select_target_->current_vnode.props);
-        SkFont font;
-        font.setSize(props.text_size);
-        font.setTypeface(pick_typeface(font_mgr_));
-
         float abs_x = 0.0f;
         float abs_y = 0.0f;
         absolute_origin_for(mouse_select_target_, abs_x, abs_y);
-        const float local_x = (x - abs_x) - 8.0f;
-        state.cursor = byte_index_for_x(state.value.view(), local_x, font);
+
+        if (mouse_select_target_->type == host_type_input()) {
+            const auto& props = std::get<InputProps>(mouse_select_target_->current_vnode.props);
+            SkFont font;
+            font.setSize(props.text_size);
+            font.setTypeface(pick_typeface(font_mgr_));
+            const float local_x = (x - abs_x) - 8.0f + state.scroll_x;
+            state.cursor = byte_index_for_x(state.value.view(), local_x, font);
+        } else if (mouse_select_target_->type == host_type_input_area()) {
+            const auto& props = std::get<InputAreaProps>(mouse_select_target_->current_vnode.props);
+            const LayoutRect r = layout_for_node(*mouse_select_target_);
+
+            SkFont font;
+            font.setSize(props.text_size);
+            font.setTypeface(pick_typeface(font_mgr_));
+            const float line_height = props.text_size * 1.4f;
+
+            const float pad_x = 8.0f;
+            const float pad_y = 8.0f;
+            const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
+            const float local_x = (x - abs_x) - pad_x;
+            const float local_y = (y - abs_y) - pad_y;
+
+            auto measure = [&](std::string_view sv) -> float {
+                return font.measureText(sv.data(), sv.size(), SkTextEncoding::kUTF8);
+            };
+
+            state.cursor = reactcpp::text::byte_index_for_wrapped_point(
+                state.value.view(),
+                content_w,
+                measure,
+                local_x,
+                local_y,
+                line_height,
+                state.scroll_y
+            );
+        } else {
+            return;
+        }
 
         const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
         state.sel_start = sel.start;
         state.sel_end = sel.end;
         state.has_selection = sel.active;
+
+        if (mouse_select_target_->type == host_type_input_area()) {
+            ensure_input_area_caret_visible(*mouse_select_target_);
+        } else if (mouse_select_target_->type == host_type_input()) {
+            ensure_input_caret_visible(*mouse_select_target_);
+        }
 
         mark_dirty(mouse_select_target_);
         request_update();
@@ -655,9 +923,29 @@ public:
         mouse_select_target_ = nullptr;
     }
 
+    void handle_mouse_wheel(float wheel_y) {
+        if (wheel_y == 0.0f) return;
+
+        InstanceNode* target = (focused_input_ && focused_input_->type == host_type_input_area()) ? focused_input_ : nullptr;
+        if (!target || !target->editable_state) return;
+
+        auto metrics = input_area_caret_metrics(*target);
+        if (!metrics) return;
+
+        auto& state = *target->editable_state;
+        const auto& props = std::get<InputAreaProps>(target->current_vnode.props);
+        const float line_height = props.text_size * 1.4f;
+        const float step = line_height * 3.0f;
+        const float max_scroll = std::max(0.0f, metrics->content_h - metrics->visible_h);
+
+        state.scroll_y = std::clamp(state.scroll_y - wheel_y * step, 0.0f, max_scroll);
+        mark_dirty(target);
+        request_update();
+    }
+
     void handle_text_input(const char* text) {
-        if (!focused_input_ || !focused_input_->input_state) return;
-        auto& state = *focused_input_->input_state;
+        if (!focused_input_ || !focused_input_->editable_state) return;
+        auto& state = *focused_input_->editable_state;
         const std::string inserted(text ? text : "");
         if (!inserted.empty()) {
             state.undo.push(snapshot_from_input(state));
@@ -667,23 +955,35 @@ public:
         selection_to(state, sel);
         state.sel_anchor = state.cursor;
         clear_preedit(state);
+
+        if (focused_input_->type == host_type_input_area()) {
+            ensure_input_area_caret_visible(*focused_input_);
+        } else if (focused_input_->type == host_type_input()) {
+            ensure_input_caret_visible(*focused_input_);
+        }
         mark_dirty(focused_input_);
         request_update();
     }
 
     void handle_text_editing(const char* text, int start, int length) {
-        if (!focused_input_ || !focused_input_->input_state) return;
-        auto& state = *focused_input_->input_state;
+        if (!focused_input_ || !focused_input_->editable_state) return;
+        auto& state = *focused_input_->editable_state;
         state.preedit = text ? std::string(text) : std::string();
         state.preedit_start = start;
         state.preedit_length = length;
+
+        if (focused_input_->type == host_type_input_area()) {
+            ensure_input_area_caret_visible(*focused_input_);
+        } else if (focused_input_->type == host_type_input()) {
+            ensure_input_caret_visible(*focused_input_);
+        }
         mark_dirty(focused_input_);
         request_update();
     }
 
     void handle_backspace() {
-        if (!focused_input_ || !focused_input_->input_state) return;
-        auto& state = *focused_input_->input_state;
+        if (!focused_input_ || !focused_input_->editable_state) return;
+        auto& state = *focused_input_->editable_state;
         state.cursor = std::min(state.cursor, state.value.size());
         if (!state.preedit.empty()) {
             return;
@@ -696,6 +996,12 @@ public:
                 reactcpp::text::erase_selection(state.value, state.cursor, sel);
                 selection_to(state, sel);
                 state.sel_anchor = state.cursor;
+
+                if (focused_input_->type == host_type_input_area()) {
+                    ensure_input_area_caret_visible(*focused_input_);
+                } else if (focused_input_->type == host_type_input()) {
+                    ensure_input_caret_visible(*focused_input_);
+                }
                 mark_dirty(focused_input_);
                 request_update();
                 return;
@@ -711,13 +1017,19 @@ public:
         state.value.erase(prev, cursor - prev);
         state.cursor = prev;
         state.sel_anchor = state.cursor;
+
+        if (focused_input_->type == host_type_input_area()) {
+            ensure_input_area_caret_visible(*focused_input_);
+        } else if (focused_input_->type == host_type_input()) {
+            ensure_input_caret_visible(*focused_input_);
+        }
         mark_dirty(focused_input_);
         request_update();
     }
 
     void handle_key_down(SDL_Keycode key, SDL_Keymod mod, bool) {
-        if (!focused_input_ || !focused_input_->input_state) return;
-        auto& state = *focused_input_->input_state;
+        if (!focused_input_ || !focused_input_->editable_state) return;
+        auto& state = *focused_input_->editable_state;
 
         const bool accel = (mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0;
         const bool shift = (mod & SDL_KMOD_SHIFT) != 0;
@@ -738,6 +1050,12 @@ public:
                     }
                     apply_snapshot(state, *snap);
                     clear_preedit(state);
+
+                    if (focused_input_->type == host_type_input_area()) {
+                        ensure_input_area_caret_visible(*focused_input_);
+                    } else if (focused_input_->type == host_type_input()) {
+                        ensure_input_caret_visible(*focused_input_);
+                    }
                     mark_dirty(focused_input_);
                     request_update();
                 }
@@ -751,6 +1069,12 @@ public:
                 state.cursor = sel.end;
                 selection_to(state, sel);
                 state.sel_anchor = 0;
+
+                if (focused_input_->type == host_type_input_area()) {
+                    ensure_input_area_caret_visible(*focused_input_);
+                } else if (focused_input_->type == host_type_input()) {
+                    ensure_input_caret_visible(*focused_input_);
+                }
                 mark_dirty(focused_input_);
                 request_update();
                 return;
@@ -772,6 +1096,12 @@ public:
                     reactcpp::text::erase_selection(state.value, state.cursor, sel);
                     selection_to(state, sel);
                     state.sel_anchor = state.cursor;
+
+                    if (focused_input_->type == host_type_input_area()) {
+                        ensure_input_area_caret_visible(*focused_input_);
+                    } else if (focused_input_->type == host_type_input()) {
+                        ensure_input_caret_visible(*focused_input_);
+                    }
                     mark_dirty(focused_input_);
                     request_update();
                 }
@@ -787,6 +1117,12 @@ public:
                     reactcpp::text::insert_text(state.value, state.cursor, sel, paste);
                     selection_to(state, sel);
                     state.sel_anchor = state.cursor;
+
+                    if (focused_input_->type == host_type_input_area()) {
+                        ensure_input_area_caret_visible(*focused_input_);
+                    } else if (focused_input_->type == host_type_input()) {
+                        ensure_input_caret_visible(*focused_input_);
+                    }
                     mark_dirty(focused_input_);
                     request_update();
                 }
@@ -803,6 +1139,24 @@ public:
             return;
         }
 
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            if (focused_input_->type != host_type_input_area()) {
+                return;
+            }
+
+            state.undo.push(snapshot_from_input(state));
+            reactcpp::text::Selection sel = selection_from(state);
+            reactcpp::text::insert_text(state.value, state.cursor, sel, "\n");
+            selection_to(state, sel);
+            state.sel_anchor = state.cursor;
+            clear_preedit(state);
+
+            ensure_input_area_caret_visible(*focused_input_);
+            mark_dirty(focused_input_);
+            request_update();
+            return;
+        }
+
             if (key == SDLK_LEFT || key == SDLK_RIGHT) {
                 state.cursor = std::min(state.cursor, state.value.size());
 
@@ -814,18 +1168,25 @@ public:
                     state.cursor = reactcpp::text::utf8_next_boundary(v, state.cursor);
                 }
 
+
             if (!shift) {
                 clear_selection(state);
                 state.sel_anchor = state.cursor;
-                } else {
-                    if (!state.has_selection) {
-                        state.sel_anchor = before;
-                    }
-                    const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
-                    state.sel_start = sel.start;
-                    state.sel_end = sel.end;
-                    state.has_selection = sel.active;
+            } else {
+                if (!state.has_selection) {
+                    state.sel_anchor = before;
                 }
+                const auto sel = reactcpp::text::selection_from_anchor(state.sel_anchor, state.cursor, state.value.size());
+                state.sel_start = sel.start;
+                state.sel_end = sel.end;
+                state.has_selection = sel.active;
+            }
+
+            if (focused_input_->type == host_type_input_area()) {
+                ensure_input_area_caret_visible(*focused_input_);
+            } else if (focused_input_->type == host_type_input()) {
+                ensure_input_caret_visible(*focused_input_);
+            }
 
             mark_dirty(focused_input_);
             request_update();
@@ -863,6 +1224,156 @@ private:
         );
     }
 
+    struct InputAreaCaretMetrics {
+        float top{0.0f};
+        float bottom{0.0f};
+        float visible_h{0.0f};
+        float content_h{0.0f};
+    };
+
+    std::optional<InputAreaCaretMetrics> input_area_caret_metrics(const InstanceNode& node) const {
+        if (node.type != host_type_input_area()) return std::nullopt;
+        if (!node.editable_state) return std::nullopt;
+
+        const auto& props = std::get<InputAreaProps>(node.current_vnode.props);
+        const auto& state = *node.editable_state;
+        const LayoutRect r = layout_for_node(node);
+
+        const float pad_x = 8.0f;
+        const float pad_y = 8.0f;
+        const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
+        const float visible_h = std::max(r.height - pad_y * 2.0f, 1.0f);
+
+        const std::string value = state.value.to_string();
+        const std::string preedit = state.preedit;
+        const bool composing = !preedit.empty();
+
+        const std::size_t cursor = std::min(state.cursor, value.size());
+        const std::string display = composing
+            ? (value.substr(0, cursor) + preedit + value.substr(cursor))
+            : value;
+        const std::size_t caret_index = composing ? (cursor + preedit.size()) : cursor;
+
+        SkFont font;
+        font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(font_mgr_));
+
+        SkFontMetrics metrics;
+        font.getMetrics(&metrics);
+        const float line_height = props.text_size * 1.4f;
+
+        auto measure = [&](std::string_view sv) -> float {
+            return font.measureText(sv.data(), sv.size(), SkTextEncoding::kUTF8);
+        };
+
+        const auto spans = reactcpp::text::wrap_text_spans(display, content_w, measure);
+        if (spans.empty()) return std::nullopt;
+
+        std::size_t line_index = spans.size() - 1;
+        std::size_t within = std::min(caret_index, display.size());
+        for (std::size_t i = 0; i < spans.size(); ++i) {
+            const auto& sp = spans[i];
+            if (within < sp.start) {
+                line_index = i;
+                within = sp.start;
+                break;
+            }
+            if (within <= sp.end) {
+                line_index = i;
+                within = std::min(within, sp.end);
+                break;
+            }
+        }
+
+        const float baseline = pad_y + static_cast<float>(line_index) * line_height - metrics.fAscent;
+        const float top = baseline + metrics.fAscent;
+        const float bottom = baseline + metrics.fDescent;
+        const float content_h = pad_y + static_cast<float>(spans.size()) * line_height;
+
+        InputAreaCaretMetrics out;
+        out.top = top;
+        out.bottom = bottom;
+        out.visible_h = visible_h;
+        out.content_h = content_h;
+        return out;
+    }
+
+    void ensure_input_area_caret_visible(InstanceNode& node) {
+        if (node.type != host_type_input_area()) return;
+        if (!node.editable_state) return;
+
+        auto m = input_area_caret_metrics(node);
+        if (!m) return;
+
+        auto& state = *node.editable_state;
+        const float margin = 4.0f;
+        const float max_scroll = std::max(0.0f, m->content_h - m->visible_h);
+
+        float next = std::clamp(state.scroll_y, 0.0f, max_scroll);
+        if (m->top < next + margin) {
+            next = m->top - margin;
+        } else if (m->bottom > next + m->visible_h - margin) {
+            next = m->bottom - m->visible_h + margin;
+        }
+        next = std::clamp(next, 0.0f, max_scroll);
+
+        if (next != state.scroll_y) {
+            state.scroll_y = next;
+            mark_dirty(&node);
+        }
+    }
+
+    void ensure_input_caret_visible(InstanceNode& node) {
+        if (node.type != host_type_input()) return;
+        if (!node.editable_state) return;
+
+        const auto& props = std::get<InputProps>(node.current_vnode.props);
+        auto& state = *node.editable_state;
+
+        const LayoutRect r = layout_for_node(node);
+        const float pad_x = 8.0f;
+        const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
+
+        SkFont font;
+        font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(font_mgr_));
+
+        const std::string value = state.value.to_string();
+        const std::size_t cursor = std::min(state.cursor, value.size());
+        const std::string preedit = state.preedit;
+
+        const bool composing = !preedit.empty();
+        const std::string display = composing
+            ? (value.substr(0, cursor) + preedit + value.substr(cursor))
+            : value;
+
+        const std::string_view display_view(display);
+        auto measure = [&](std::size_t bytes) -> float {
+            bytes = std::min(bytes, display_view.size());
+            return font.measureText(display_view.data(), bytes, SkTextEncoding::kUTF8);
+        };
+
+        const std::size_t caret_index = composing ? (cursor + preedit.size()) : cursor;
+        const float caret_x = measure(caret_index);
+        const float total_w = measure(display_view.size());
+
+        const float max_scroll = std::max(0.0f, total_w - content_w);
+        float next = std::clamp(state.scroll_x, 0.0f, max_scroll);
+
+        const float margin = 12.0f;
+        if (caret_x < next + margin) {
+            next = caret_x - margin;
+        } else if (caret_x > next + content_w - margin) {
+            next = caret_x - (content_w - margin);
+        }
+        next = std::clamp(next, 0.0f, max_scroll);
+
+        if (next != state.scroll_x) {
+            state.scroll_x = next;
+            mark_dirty(&node);
+        }
+    }
+
     static bool is_descendant_or_self(const InstanceNode* node, const InstanceNode* possible_ancestor) {
         for (auto* current = node; current != nullptr; current = current->parent) {
             if (current == possible_ancestor) {
@@ -875,14 +1386,14 @@ private:
     void set_focus(InstanceNode* node) {
         if (focused_node_ == node) return;
 
-        const bool was_input = focused_node_ && focused_node_->type == host_type_input();
+        const bool was_input = focused_node_ && (focused_node_->type == host_type_input() || focused_node_->type == host_type_input_area());
 
         if (focused_node_) {
             focused_node_->focused = false;
-            if (focused_node_->type == host_type_input() && focused_node_->input_state) {
-                focused_node_->input_state->focused = false;
-                clear_preedit(*focused_node_->input_state);
-                clear_selection(*focused_node_->input_state);
+            if ((focused_node_->type == host_type_input() || focused_node_->type == host_type_input_area()) && focused_node_->editable_state) {
+                focused_node_->editable_state->focused = false;
+                clear_preedit(*focused_node_->editable_state);
+                clear_selection(*focused_node_->editable_state);
             }
             if (auto on_blur = blur_handler_for(focused_node_->current_vnode.props)) {
                 (*on_blur)();
@@ -897,26 +1408,42 @@ private:
         }
 
         focused_node_ = node;
-        focused_input_ = (focused_node_ && focused_node_->type == host_type_input()) ? focused_node_ : nullptr;
+        focused_input_ = (focused_node_ && (focused_node_->type == host_type_input() || focused_node_->type == host_type_input_area()))
+            ? focused_node_
+            : nullptr;
 
         if (focused_node_) {
             focused_node_->focused = true;
-            if (focused_node_->type == host_type_input() && focused_node_->input_state) {
-                focused_node_->input_state->focused = true;
-                focused_node_->input_state->cursor = std::min(
-                    focused_node_->input_state->cursor,
-                    focused_node_->input_state->value.size()
+            if ((focused_node_->type == host_type_input() || focused_node_->type == host_type_input_area()) && focused_node_->editable_state) {
+                focused_node_->editable_state->focused = true;
+                focused_node_->editable_state->cursor = std::min(
+                    focused_node_->editable_state->cursor,
+                    focused_node_->editable_state->value.size()
                 );
-                reactcpp::text::Selection sel = selection_from(*focused_node_->input_state);
-                selection_to(*focused_node_->input_state, sel);
+                reactcpp::text::Selection sel = selection_from(*focused_node_->editable_state);
+                selection_to(*focused_node_->editable_state, sel);
+
+                if (focused_node_->type == host_type_input_area()) {
+                    ensure_input_area_caret_visible(*focused_node_);
+                } else if (focused_node_->type == host_type_input()) {
+                    ensure_input_caret_visible(*focused_node_);
+                }
             }
             if (auto on_focus = focus_handler_for(focused_node_->current_vnode.props)) {
                 (*on_focus)();
             }
         }
 
-        if (window_ && focused_node_ && focused_node_->type == host_type_input()) {
-            (void)SDL_StartTextInput(window_);
+        if (window_ && focused_node_ && (focused_node_->type == host_type_input() || focused_node_->type == host_type_input_area())) {
+            const bool multiline = focused_node_->type == host_type_input_area();
+            const SDL_PropertiesID props = SDL_CreateProperties();
+            if (props != 0) {
+                (void)SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, multiline);
+                (void)SDL_StartTextInputWithProperties(window_, props);
+                SDL_DestroyProperties(props);
+            } else {
+                (void)SDL_StartTextInput(window_);
+            }
         }
     }
 
@@ -932,7 +1459,7 @@ private:
 
     void update_text_input_area_if_needed(const DrawContext& ctx) {
         if (!window_) return;
-        if (!focused_input_ || !focused_input_->input_state) return;
+        if (!focused_input_ || !focused_input_->editable_state) return;
 
         int win_w = 0;
         int win_h = 0;
@@ -960,23 +1487,91 @@ private:
         rect.w = static_cast<int>(std::lround(std::max(rect_w_f, 1.0f)));
         rect.h = static_cast<int>(std::lround(std::max(rect_h_f, 1.0f)));
 
-        const auto& props = std::get<InputProps>(focused_input_->current_vnode.props);
-        const auto& state = *focused_input_->input_state;
+        float text_size = 18.0f;
+        if (focused_input_->type == host_type_input()) {
+            text_size = std::get<InputProps>(focused_input_->current_vnode.props).text_size;
+        } else if (focused_input_->type == host_type_input_area()) {
+            text_size = std::get<InputAreaProps>(focused_input_->current_vnode.props).text_size;
+        } else {
+            return;
+        }
+
+        const auto& state = *focused_input_->editable_state;
 
         const std::size_t cursor = std::min(state.cursor, state.value.size());
         const std::string left_text = state.value.substr(0, cursor);
 
         SkFont font;
-        font.setSize(props.text_size);
+        font.setSize(text_size);
         font.setTypeface(pick_typeface(ctx.font_mgr));
 
-        const float text_x = 8.0f;
-        float cursor_x = text_x + font.measureText(left_text.c_str(), left_text.size(), SkTextEncoding::kUTF8);
-        if (!state.preedit.empty()) {
-            cursor_x += font.measureText(state.preedit.c_str(), state.preedit.size(), SkTextEncoding::kUTF8);
+        float cursor_x = 8.0f + font.measureText(left_text.c_str(), left_text.size(), SkTextEncoding::kUTF8);
+        float cursor_line_y = 0.0f;
+        std::optional<float> ime_line_height_surface;
+        if (focused_input_->type == host_type_input_area()) {
+            const float pad_x = 8.0f;
+            const float pad_y = 8.0f;
+            const float content_w = std::max(lr.width - pad_x * 2.0f, 1.0f);
+
+            SkFontMetrics metrics;
+            font.getMetrics(&metrics);
+            const float line_height = text_size * 1.4f;
+            ime_line_height_surface = line_height;
+
+            const std::string value = state.value.to_string();
+            const std::size_t cursor = std::min(state.cursor, value.size());
+            const std::string preedit = state.preedit;
+            const bool composing = !preedit.empty();
+
+            const std::string display = composing
+                ? (value.substr(0, cursor) + preedit + value.substr(cursor))
+                : value;
+            const std::size_t caret_index = composing ? (cursor + preedit.size()) : cursor;
+
+            auto measure = [&](std::string_view s) -> float {
+                return font.measureText(s.data(), s.size(), SkTextEncoding::kUTF8);
+            };
+
+            const auto spans = reactcpp::text::wrap_text_spans(display, content_w, measure);
+            if (!spans.empty()) {
+                std::size_t line_index = spans.size() - 1;
+                std::size_t line_start = spans.back().start;
+                std::size_t within = std::min(caret_index, display.size());
+
+                for (std::size_t i = 0; i < spans.size(); ++i) {
+                    const auto& sp = spans[i];
+                    if (within < sp.start) {
+                        line_index = i;
+                        line_start = sp.start;
+                        within = sp.start;
+                        break;
+                    }
+                    if (within <= sp.end) {
+                        line_index = i;
+                        line_start = sp.start;
+                        within = std::min(within, sp.end);
+                        break;
+                    }
+                }
+
+                cursor_x = pad_x + measure(std::string_view(display).substr(line_start, within - line_start));
+                cursor_line_y = pad_y + static_cast<float>(line_index) * line_height - state.scroll_y;
+            }
+        } else {
+            if (!state.preedit.empty()) {
+                cursor_x += font.measureText(state.preedit.c_str(), state.preedit.size(), SkTextEncoding::kUTF8);
+            }
+
+            cursor_x -= state.scroll_x;
         }
 
         float cursor_off_f = cursor_x * to_win_x;
+        rect_y_f += cursor_line_y * to_win_y;
+
+        if (ime_line_height_surface) {
+            const float line_h_f = std::max(*ime_line_height_surface, 1.0f) * to_win_y;
+            rect.h = static_cast<int>(std::lround(std::max(line_h_f, 1.0f)));
+        }
 
         if (const char* driver = SDL_GetCurrentVideoDriver(); driver && std::strcmp(driver, "wayland") == 0) {
             int pix_w = 0;
@@ -1146,12 +1741,13 @@ private:
     static void draw_input_caret_if_focused(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx, float height) {
         if (!node.focused) return;
         if (node.type != host_type_input()) return;
-        if (!node.input_state) return;
+        if (!node.editable_state) return;
 
         const auto& props = std::get<InputProps>(node.current_vnode.props);
-        const std::string value = node.input_state->value.to_string();
-        const std::string preedit = node.input_state->preedit;
-        const std::size_t cursor = std::min(node.input_state->cursor, value.size());
+        const std::string value = node.editable_state->value.to_string();
+        const std::string preedit = node.editable_state->preedit;
+        const std::size_t cursor = std::min(node.editable_state->cursor, value.size());
+        const float scroll_x = node.editable_state->scroll_x;
 
         const float text_x = 8.0f;
         SkFont font;
@@ -1163,11 +1759,112 @@ private:
         if (!preedit.empty()) {
             cursor_x += font.measureText(preedit.c_str(), preedit.size(), SkTextEncoding::kUTF8);
         }
+
+        cursor_x -= scroll_x;
+
+        const LayoutRect r = layout_for_node(node);
+        const float pad_x = 8.0f;
+        const float pad_y = 8.0f;
+        const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
+        const float content_h = std::max(height - pad_y * 2.0f, 1.0f);
+        const SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, std::max(r.width, 1.0f), std::max(height, 1.0f));
+        const SkRect content_rect = SkRect::MakeXYWH(pad_x, pad_y, content_w, content_h);
+
+        canvas->save();
+        SkRRect clip_rr;
+        clip_rr.setRectXY(bounds, 6.0f, 6.0f);
+        canvas->clipRRect(clip_rr, true);
+        canvas->clipRect(content_rect, true);
         SkPaint caret;
         caret.setAntiAlias(true);
         caret.setColor(make_color(0.2f, 0.2f, 0.2f));
         caret.setStrokeWidth(1.5f);
         canvas->drawLine(cursor_x, 8.0f, cursor_x, height - 8.0f, caret);
+        canvas->restore();
+    }
+
+    static void draw_input_area_caret_if_focused(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx, float width, float height) {
+        if (!node.focused) return;
+        if (node.type != host_type_input_area()) return;
+        if (!node.editable_state) return;
+
+        const auto& props = std::get<InputAreaProps>(node.current_vnode.props);
+        const auto& state = *node.editable_state;
+        const std::string value = state.value.to_string();
+        const std::string preedit = state.preedit;
+        const bool composing = !preedit.empty();
+
+        const std::size_t cursor = std::min(state.cursor, value.size());
+        const std::string display = composing
+            ? (value.substr(0, cursor) + preedit + value.substr(cursor))
+            : value;
+        const std::size_t caret_index = composing ? (cursor + preedit.size()) : cursor;
+
+        const float pad_x = 8.0f;
+        const float pad_y = 8.0f;
+        const float content_w = std::max(width - pad_x * 2.0f, 1.0f);
+        const float content_h = std::max(height - pad_y * 2.0f, 1.0f);
+        const SkRect content_rect = SkRect::MakeXYWH(pad_x, pad_y, content_w, content_h);
+
+        SkFont font;
+        font.setSize(props.text_size);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkFontMetrics metrics;
+        font.getMetrics(&metrics);
+        const float line_height = props.text_size * 1.4f;
+
+        auto measure = [&](std::string_view s) -> float {
+            return font.measureText(s.data(), s.size(), SkTextEncoding::kUTF8);
+        };
+
+        const auto spans = reactcpp::text::wrap_text_spans(display, content_w, measure);
+        if (spans.empty()) return;
+
+        std::size_t line_index = spans.size() - 1;
+        std::size_t line_start = spans.back().start;
+        std::size_t line_end = spans.back().end;
+        std::size_t within = std::min(caret_index, display.size());
+
+        for (std::size_t i = 0; i < spans.size(); ++i) {
+            const auto& sp = spans[i];
+            if (within < sp.start) {
+                line_index = i;
+                line_start = sp.start;
+                line_end = sp.end;
+                within = sp.start;
+                break;
+            }
+            if (within <= sp.end) {
+                line_index = i;
+                line_start = sp.start;
+                line_end = sp.end;
+                within = std::min(within, sp.end);
+                break;
+            }
+        }
+
+        (void)line_end;
+        const float baseline = pad_y + static_cast<float>(line_index) * line_height - metrics.fAscent;
+        const float caret_x = pad_x + measure(std::string_view(display).substr(line_start, within - line_start));
+
+        const float top = baseline + metrics.fAscent;
+        const float bottom = baseline + metrics.fDescent;
+
+        SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, width, height);
+        canvas->save();
+        SkRRect clip_rr;
+        clip_rr.setRectXY(bounds, 6.0f, 6.0f);
+        canvas->clipRRect(clip_rr, true);
+        canvas->clipRect(content_rect, true);
+        canvas->translate(0.0f, -state.scroll_y);
+
+        SkPaint caret;
+        caret.setAntiAlias(true);
+        caret.setColor(make_color(0.2f, 0.2f, 0.2f));
+        caret.setStrokeWidth(1.5f);
+        canvas->drawLine(caret_x, top, caret_x, bottom, caret);
+        canvas->restore();
     }
 
     bool reconcile_children(InstanceNode& inst, const std::vector<Element>& new_children) {
@@ -1212,10 +1909,9 @@ private:
     }
 
     void init_node_state(InstanceNode& node) {
-        if (node.type == host_type_input()) {
-            const auto& props = std::get<InputProps>(node.current_vnode.props);
-            InstanceNode::InputState state;
-            state.value = reactcpp::text::TextBuffer(props.value);
+        auto init_from_value = [&](const std::string& v) {
+            InstanceNode::EditableTextState state;
+            state.value = reactcpp::text::TextBuffer(v);
             state.value.set_kind(reactcpp::text::TextBuffer::Kind::Gap);
             state.cursor = state.value.size();
             state.sel_start = 0;
@@ -1223,10 +1919,19 @@ private:
             state.sel_anchor = state.cursor;
             state.has_selection = false;
             state.focused = false;
+            state.scroll_y = 0.0f;
             clear_preedit(state);
-            node.input_state = std::move(state);
+            node.editable_state = std::move(state);
+        };
+
+        if (node.type == host_type_input()) {
+            const auto& props = std::get<InputProps>(node.current_vnode.props);
+            init_from_value(props.value);
+        } else if (node.type == host_type_input_area()) {
+            const auto& props = std::get<InputAreaProps>(node.current_vnode.props);
+            init_from_value(props.value);
         } else {
-            node.input_state.reset();
+            node.editable_state.reset();
         }
     }
 
@@ -1257,16 +1962,22 @@ private:
 
         if (inst.current_vnode.props != vnode.props) {
             local_changed = true;
-            if (inst.type == host_type_input() && inst.input_state) {
-                const auto& new_input = std::get<InputProps>(vnode.props);
-                const std::string current = inst.input_state->value.to_string();
-                if (current != new_input.value) {
-                    inst.input_state->value.set_string(new_input.value);
-                    inst.input_state->cursor = std::min(inst.input_state->cursor, inst.input_state->value.size());
-                    clear_preedit(*inst.input_state);
-                    reactcpp::text::Selection sel = selection_from(*inst.input_state);
-                    selection_to(*inst.input_state, sel);
-                    inst.input_state->sel_anchor = inst.input_state->cursor;
+            if ((inst.type == host_type_input() || inst.type == host_type_input_area()) && inst.editable_state) {
+                std::string next_value;
+                if (inst.type == host_type_input()) {
+                    next_value = std::get<InputProps>(vnode.props).value;
+                } else {
+                    next_value = std::get<InputAreaProps>(vnode.props).value;
+                }
+
+                const std::string current = inst.editable_state->value.to_string();
+                if (current != next_value) {
+                    inst.editable_state->value.set_string(next_value);
+                    inst.editable_state->cursor = std::min(inst.editable_state->cursor, inst.editable_state->value.size());
+                    clear_preedit(*inst.editable_state);
+                    reactcpp::text::Selection sel = selection_from(*inst.editable_state);
+                    selection_to(*inst.editable_state, sel);
+                    inst.editable_state->sel_anchor = inst.editable_state->cursor;
                 }
             }
         }
@@ -1316,6 +2027,7 @@ private:
         }
 
         draw_input_caret_if_focused(node, canvas, ctx, r.height);
+        draw_input_area_caret_if_focused(node, canvas, ctx, r.width, r.height);
         draw_focus_ring(node, canvas, r.width, r.height);
 
         canvas->restore();
@@ -1370,6 +2082,11 @@ TypeId host_type_input() {
     return &dummy;
 }
 
+TypeId host_type_input_area() {
+    static int dummy;
+    return &dummy;
+}
+
 Element View(const ViewProps& props, std::vector<Element> children) {
     Element e;
     e.type = host_type_view();
@@ -1396,6 +2113,14 @@ Element Input(const InputProps& props) {
     Element e;
     e.type = host_type_input();
     e.props = props;
+    return e;
+}
+
+Element InputArea(const InputAreaProps& props, std::vector<Element> children) {
+    Element e;
+    e.type = host_type_input_area();
+    e.props = props;
+    e.children = std::move(children);
     return e;
 }
 
@@ -1478,6 +2203,8 @@ int run_skia_app(const AppRenderFunc& app) {
                 }
             } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
                 runtime.handle_mouse_button_up(static_cast<float>(e.button.x), static_cast<float>(e.button.y));
+            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_WHEEL) {
+                runtime.handle_mouse_wheel(e.wheel.y);
             } else if (e.type == REACTCPP_SDL_EVENT_TEXT_EDITING) {
                 runtime.handle_text_editing(e.edit.text, e.edit.start, e.edit.length);
             } else if (e.type == REACTCPP_SDL_EVENT_TEXT_INPUT) {

@@ -127,7 +127,21 @@ struct InputProps : ViewProps {
     bool operator==(const InputProps&) const = default;
 };
 
-using ElementProps = std::variant<ViewProps, ButtonProps, TextProps, InputProps>;
+struct InputAreaProps : ViewProps {
+    std::string value;
+    std::string placeholder;
+    float text_size{18.0f};
+    float text_r{0.1f};
+    float text_g{0.1f};
+    float text_b{0.1f};
+    float border_r{0.7f};
+    float border_g{0.7f};
+    float border_b{0.7f};
+
+    bool operator==(const InputAreaProps&) const = default;
+};
+
+using ElementProps = std::variant<ViewProps, ButtonProps, TextProps, InputProps, InputAreaProps>;
 
 struct Element {
     TypeId type{};
@@ -144,11 +158,13 @@ TypeId host_type_view();
 TypeId host_type_button();
 TypeId host_type_text();
 TypeId host_type_input();
+TypeId host_type_input_area();
 
 Element View(const ViewProps& props, std::vector<Element> children = {});
 Element Button(const ButtonProps& props);
 Element Text(const TextProps& props);
 Element Input(const InputProps& props);
+Element InputArea(const InputAreaProps& props, std::vector<Element> children = {});
 
 enum class HookKind : std::uint8_t {
     State
@@ -175,7 +191,7 @@ struct InstanceNode {
 
     std::uintptr_t yoga_node_handle{0};
 
-    struct InputState {
+    struct EditableTextState {
         reactcpp::text::TextBuffer value;
         std::size_t cursor{0};
 
@@ -186,13 +202,16 @@ struct InstanceNode {
 
         bool focused{false};
 
+        float scroll_x{0.0f};
+        float scroll_y{0.0f};
+
         std::string preedit;
         int preedit_start{-1};
         int preedit_length{-1};
 
         reactcpp::text::UndoHistory undo{100};
     };
-    std::optional<InputState> input_state;
+    std::optional<EditableTextState> editable_state;
 };
 
 struct HookDispatcher {
