@@ -13,6 +13,8 @@ include(FetchContent)
 
 option(REACTCPP_BUILD_DEMO "Build SDL+Skia demo (requires external skia-builder)" ON)
 
+option(REACTCPP_USE_GANESH_GL "Use Skia Ganesh GL backend for demo" OFF)
+
 set(SKIA_BUILDER_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder")
 set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Path to skia-builder directory")
 
@@ -50,6 +52,12 @@ if (REACTCPP_BUILD_DEMO)
         src/main.cpp
     )
 
+    if (REACTCPP_USE_GANESH_GL)
+        target_compile_definitions(reactcpp_demo PRIVATE REACTCPP_USE_GANESH_GL=1)
+        find_package(OpenGL REQUIRED)
+        target_link_libraries(reactcpp_demo PRIVATE OpenGL::GL)
+    endif()
+
     add_executable(react_cpp_skia_runtime_input_area_enter_tests
         tests/skia_runtime_input_area_enter_tests.cpp
     )
@@ -60,6 +68,8 @@ if (REACTCPP_BUILD_DEMO)
     )
 
     add_test(NAME skia_runtime_input_area_enter_tests COMMAND react_cpp_skia_runtime_input_area_enter_tests)
+
+
 
     # Yoga (Flexbox layout)
     FetchContent_Declare(

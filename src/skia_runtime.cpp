@@ -1,11 +1,13 @@
 #include "skia_runtime.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -20,7 +22,6 @@
 #include "core/SkFontMetrics.h"
 #include "core/SkFontMgr.h"
 #include "core/SkFontStyle.h"
-#include "core/SkImageInfo.h"
 #include "core/SkPaint.h"
 #include "core/SkPicture.h"
 #include "core/SkPictureRecorder.h"
@@ -30,6 +31,16 @@
 #include "core/SkSurface.h"
 #include "core/SkTypeface.h"
 
+#if defined(REACTCPP_USE_GANESH_GL)
+#include "gpu/ganesh/GrDirectContext.h"
+#include "gpu/ganesh/GrBackendSurface.h"
+#include "gpu/ganesh/gl/GrGLBackendSurface.h"
+#include "gpu/ganesh/gl/GrGLDirectContext.h"
+#include "gpu/ganesh/gl/GrGLInterface.h"
+#include "gpu/ganesh/gl/GrGLTypes.h"
+#include "gpu/ganesh/SkSurfaceGanesh.h"
+#endif
+
 #include "effects/SkGradientShader.h"
 
 #include "ports/SkFontMgr_fontconfig.h"
@@ -38,6 +49,13 @@
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+
+#if defined(REACTCPP_USE_GANESH_GL)
+#include <SDL3/SDL_opengl.h>
+#endif
+
+#include "render_thread.hpp"
+
 
 #define REACTCPP_SDL_EVENT_QUIT SDL_EVENT_QUIT
 #define REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN SDL_EVENT_MOUSE_BUTTON_DOWN
@@ -694,16 +712,26 @@ static void apply_layout_results(InstanceNode& node) {
 
 class SkiaRuntime {
 public:
-    SkiaRuntime(AppRenderFunc app, SDL_Window* window, int surface_w, int surface_h)
+    SkiaRuntime(AppRenderFunc app, reactcpp::PlatformBridge platform, int surface_w, int surface_h)
         : app_render_(std::move(app))
         , surface_width_(surface_w)
         , surface_height_(surface_h)
-        , window_(window) {
+        , platform_(platform) {
         font_mgr_ = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
 
         g_skia_dispatcher.request_update = &SkiaRuntime::request_update_trampoline;
         g_skia_dispatcher.request_update_ctx = this;
     }
+
+#if defined(REACTCPP_INTERNAL_TESTING)
+    void test_set_focused_input(InstanceNode* node) {
+        focused_node_ = node;
+        focused_input_ = node;
+    }
+
+    void test_set_update_requested(bool v) { update_requested_ = v; }
+    bool test_update_requested() const { return update_requested_; }
+#endif
 
     Element render_frame() {
         g_skia_dispatcher.current_instance = &root_instance_;
@@ -745,9 +773,8 @@ public:
     }
 
     void handle_mouse_button_down(float win_x, float win_y, std::uint8_t clicks) {
-        float x = win_x;
-        float y = win_y;
-        window_to_surface(x, y);
+        const float x = win_x;
+        const float y = win_y;
 
         InstanceNode* hit = hit_test_at(root_instance_, x, y);
         InstanceNode* hit_input = find_ancestor_by_type(hit, host_type_input());
@@ -758,9 +785,7 @@ public:
         if (!hit_editable || !hit_editable->editable_state) {
             mouse_selecting_ = false;
             mouse_select_target_ = nullptr;
-            if (window_) {
-                (void)SDL_CaptureMouse(false);
-            }
+            this->set_mouse_capture(false);
             if (hit) {
                 (void)dispatch_click_bubble(hit);
             }
@@ -841,9 +866,7 @@ public:
 
         mouse_selecting_ = true;
         mouse_select_target_ = focused_input_;
-        if (window_) {
-            (void)SDL_CaptureMouse(true);
-        }
+        this->set_mouse_capture(true);
         mark_dirty(focused_input_);
         request_update();
     }
@@ -853,9 +876,8 @@ public:
         auto& state = *mouse_select_target_->editable_state;
         if (!state.preedit.empty()) return;
 
-        float x = win_x;
-        float y = win_y;
-        window_to_surface(x, y);
+        const float x = win_x;
+        const float y = win_y;
 
         float abs_x = 0.0f;
         float abs_y = 0.0f;
@@ -916,11 +938,17 @@ public:
     }
 
     void handle_mouse_button_up(float, float) {
-        if (window_) {
-            (void)SDL_CaptureMouse(false);
-        }
+        this->set_mouse_capture(false);
         mouse_selecting_ = false;
         mouse_select_target_ = nullptr;
+    }
+
+    void set_mouse_capture(bool enabled) {
+        if (!platform_.cmds) return;
+        reactcpp::PlatformCommand cmd;
+        cmd.type = reactcpp::PlatformCmdType::SetMouseCapture;
+        cmd.mouse_capture = enabled;
+        platform_.cmds->push(std::move(cmd));
     }
 
     void handle_mouse_wheel(float wheel_y) {
@@ -1035,8 +1063,8 @@ public:
         const bool shift = (mod & SDL_KMOD_SHIFT) != 0;
 
         if (accel) {
-            if (!state.preedit.empty() && window_) {
-                (void)SDL_ClearComposition(window_);
+            if (!state.preedit.empty()) {
+                this->clear_composition();
                 clear_preedit(state);
             }
 
@@ -1045,8 +1073,8 @@ public:
             if (key == SDLK_Z) {
                 auto snap = state.undo.pop();
                 if (snap) {
-                    if (!state.preedit.empty() && window_) {
-                        (void)SDL_ClearComposition(window_);
+                    if (!state.preedit.empty()) {
+                        this->clear_composition();
                     }
                     apply_snapshot(state, *snap);
                     clear_preedit(state);
@@ -1083,7 +1111,7 @@ public:
             if (key == SDLK_C) {
                 const std::string copy = reactcpp::text::selected_substr(state.value, sel);
                 if (!copy.empty()) {
-                    (void)SDL_SetClipboardText(copy.c_str());
+                    this->set_clipboard_text(copy);
                 }
                 return;
             }
@@ -1091,7 +1119,7 @@ public:
             if (key == SDLK_X) {
                 const std::string cut = reactcpp::text::selected_substr(state.value, sel);
                 if (!cut.empty()) {
-                    (void)SDL_SetClipboardText(cut.c_str());
+                    this->set_clipboard_text(cut);
                     state.undo.push(snapshot_from_input(state));
                     reactcpp::text::erase_selection(state.value, state.cursor, sel);
                     selection_to(state, sel);
@@ -1109,9 +1137,7 @@ public:
             }
 
             if (key == SDLK_V) {
-                char* clip = SDL_GetClipboardText();
-                const std::string paste = clip ? std::string(clip) : std::string();
-                if (clip) SDL_free(clip);
+                const std::string paste = this->get_clipboard_text();
                 if (!paste.empty()) {
                     state.undo.push(snapshot_from_input(state));
                     reactcpp::text::insert_text(state.value, state.cursor, sel, paste);
@@ -1204,14 +1230,44 @@ private:
         update_requested_ = true;
     }
 
-    void window_to_surface(float& x, float& y) const {
-        if (!window_) return;
-        int win_w = 0;
-        int win_h = 0;
-        if (!SDL_GetWindowSize(window_, &win_w, &win_h)) return;
-        if (win_w <= 0 || win_h <= 0) return;
-        x = x * (static_cast<float>(surface_width_) / static_cast<float>(win_w));
-        y = y * (static_cast<float>(surface_height_) / static_cast<float>(win_h));
+    void clear_composition() {
+        if (!platform_.cmds) return;
+        reactcpp::PlatformCommand cmd;
+        cmd.type = reactcpp::PlatformCmdType::ClearComposition;
+        platform_.cmds->push(std::move(cmd));
+    }
+
+    void start_text_input(bool multiline) {
+        if (!platform_.cmds) return;
+        reactcpp::PlatformCommand cmd;
+        cmd.type = reactcpp::PlatformCmdType::StartTextInput;
+        cmd.multiline = multiline;
+        platform_.cmds->push(std::move(cmd));
+    }
+
+    void stop_text_input() {
+        if (!platform_.cmds) return;
+        reactcpp::PlatformCommand cmd;
+        cmd.type = reactcpp::PlatformCmdType::StopTextInput;
+        platform_.cmds->push(std::move(cmd));
+    }
+
+    void set_clipboard_text(const std::string& text) {
+        if (!platform_.cmds) return;
+        reactcpp::PlatformCommand cmd;
+        cmd.type = reactcpp::PlatformCmdType::SetClipboardText;
+        cmd.text = text;
+        platform_.cmds->push(std::move(cmd));
+    }
+
+    std::string get_clipboard_text() {
+        if (!platform_.cmds || !platform_.clipboard) return {};
+        const std::uint64_t id = platform_.clipboard->new_request_id();
+        reactcpp::PlatformCommand cmd;
+        cmd.type = reactcpp::PlatformCmdType::GetClipboardText;
+        cmd.request_id = id;
+        platform_.cmds->push(std::move(cmd));
+        return platform_.clipboard->wait_response(id);
     }
 
     static std::size_t byte_index_for_x(std::string_view s, float local_x, const SkFont& font) {
@@ -1400,9 +1456,9 @@ private:
             }
         }
 
-        if (window_ && was_input) {
-            (void)SDL_ClearComposition(window_);
-            (void)SDL_StopTextInput(window_);
+        if (was_input) {
+            this->clear_composition();
+            this->stop_text_input();
             last_text_input_area_.reset();
             last_text_input_cursor_px_ = -1;
         }
@@ -1434,16 +1490,9 @@ private:
             }
         }
 
-        if (window_ && focused_node_ && (focused_node_->type == host_type_input() || focused_node_->type == host_type_input_area())) {
+        if (focused_node_ && (focused_node_->type == host_type_input() || focused_node_->type == host_type_input_area())) {
             const bool multiline = focused_node_->type == host_type_input_area();
-            const SDL_PropertiesID props = SDL_CreateProperties();
-            if (props != 0) {
-                (void)SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, multiline);
-                (void)SDL_StartTextInputWithProperties(window_, props);
-                SDL_DestroyProperties(props);
-            } else {
-                (void)SDL_StartTextInput(window_);
-            }
+            this->start_text_input(multiline);
         }
     }
 
@@ -1458,28 +1507,19 @@ private:
     }
 
     void update_text_input_area_if_needed(const DrawContext& ctx) {
-        if (!window_) return;
         if (!focused_input_ || !focused_input_->editable_state) return;
 
-        int win_w = 0;
-        int win_h = 0;
-        (void)SDL_GetWindowSize(window_, &win_w, &win_h);
-        if (win_w <= 0 || win_h <= 0) return;
-
-        const float surface_w = std::max(static_cast<float>(ctx.surface_width), 1.0f);
-        const float surface_h = std::max(static_cast<float>(ctx.surface_height), 1.0f);
-        const float to_win_x = static_cast<float>(win_w) / surface_w;
-        const float to_win_y = static_cast<float>(win_h) / surface_h;
+        (void)ctx;
 
         const LayoutRect lr = layout_for_node(*focused_input_);
         float abs_x = 0.0f;
         float abs_y = 0.0f;
         absolute_origin_for(focused_input_, abs_x, abs_y);
 
-        float rect_x_f = abs_x * to_win_x;
-        float rect_y_f = abs_y * to_win_y;
-        float rect_w_f = std::max(lr.width, 1.0f) * to_win_x;
-        float rect_h_f = std::max(lr.height, 1.0f) * to_win_y;
+        float rect_x_f = abs_x;
+        float rect_y_f = abs_y;
+        float rect_w_f = std::max(lr.width, 1.0f);
+        float rect_h_f = std::max(lr.height, 1.0f);
 
         SDL_Rect rect;
         rect.x = static_cast<int>(std::lround(rect_x_f));
@@ -1566,29 +1606,17 @@ private:
             cursor_x -= state.scroll_x;
         }
 
-        float cursor_off_f = cursor_x * to_win_x;
-        rect_y_f += cursor_line_y * to_win_y;
+        float cursor_off_f = cursor_x;
+        rect_y_f += cursor_line_y;
+
+        rect.y = static_cast<int>(std::lround(rect_y_f));
 
         if (ime_line_height_surface) {
-            const float line_h_f = std::max(*ime_line_height_surface, 1.0f) * to_win_y;
+            const float line_h_f = std::max(*ime_line_height_surface, 1.0f);
             rect.h = static_cast<int>(std::lround(std::max(line_h_f, 1.0f)));
         }
 
-        if (const char* driver = SDL_GetCurrentVideoDriver(); driver && std::strcmp(driver, "wayland") == 0) {
-            int pix_w = 0;
-            int pix_h = 0;
-            if (SDL_GetWindowSizeInPixels(window_, &pix_w, &pix_h) && pix_w > 0 && pix_h > 0) {
-                const float to_px_x = static_cast<float>(pix_w) / static_cast<float>(win_w);
-                const float to_px_y = static_cast<float>(pix_h) / static_cast<float>(win_h);
-                rect.x = static_cast<int>(std::lround(static_cast<float>(rect.x) * to_px_x));
-                rect.y = static_cast<int>(std::lround(static_cast<float>(rect.y) * to_px_y));
-                rect.w = static_cast<int>(std::lround(std::max(static_cast<float>(rect.w) * to_px_x, 1.0f)));
-                rect.h = static_cast<int>(std::lround(std::max(static_cast<float>(rect.h) * to_px_y, 1.0f)));
-                cursor_off_f *= to_px_x;
-            }
-        }
-
-        const int cursor_px = static_cast<int>(std::lround(cursor_off_f));
+        const int cursor_px = rect.x + static_cast<int>(std::lround(cursor_off_f));
 
         if (last_text_input_area_ && rect.x == last_text_input_area_->x && rect.y == last_text_input_area_->y
             && rect.w == last_text_input_area_->w && rect.h == last_text_input_area_->h
@@ -1596,7 +1624,14 @@ private:
             return;
         }
 
-        (void)SDL_SetTextInputArea(window_, &rect, cursor_px);
+        if (platform_.cmds) {
+            reactcpp::PlatformCommand cmd;
+            cmd.type = reactcpp::PlatformCmdType::SetTextInputArea;
+            cmd.rect = rect;
+            cmd.cursor_px = cursor_px;
+            platform_.cmds->push(std::move(cmd));
+        }
+
         last_text_input_area_ = rect;
         last_text_input_cursor_px_ = cursor_px;
     }
@@ -2047,7 +2082,7 @@ private:
     int surface_width_{800};
     int surface_height_{600};
 
-    SDL_Window* window_{nullptr};
+    reactcpp::PlatformBridge platform_{};
     std::optional<SDL_Rect> last_text_input_area_;
     int last_text_input_cursor_px_{-1};
 
@@ -2131,6 +2166,311 @@ int run_skia_app(const AppRenderFunc& app) {
         throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
     }
 
+#if defined(REACTCPP_USE_GANESH_GL)
+
+    (void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    (void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    (void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    (void)SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    (void)SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+    (void)SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+
+    const int initial_w = 800;
+    const int initial_h = 600;
+
+    SDL_Window* window = SDL_CreateWindow(
+        "ReactCpp GUI Demo",
+        initial_w,
+        initial_h,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
+    );
+    if (!window) {
+        SDL_Quit();
+        throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
+    }
+
+    SDL_GLContext glctx = SDL_GL_CreateContext(window);
+    if (!glctx) {
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        throw std::runtime_error(std::string("SDL_GL_CreateContext failed: ") + SDL_GetError());
+    }
+    if (!SDL_GL_MakeCurrent(window, glctx)) {
+        SDL_GL_DestroyContext(glctx);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        throw std::runtime_error(std::string("SDL_GL_MakeCurrent failed: ") + SDL_GetError());
+    }
+    (void)SDL_GL_SetSwapInterval(1);
+
+    auto gl_interface = GrGLMakeNativeInterface();
+    if (!gl_interface || !gl_interface->validate()) {
+        SDL_GL_DestroyContext(glctx);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        throw std::runtime_error("GrGLMakeNativeInterface failed");
+    }
+
+    auto gr = GrDirectContexts::MakeGL(gl_interface);
+    if (!gr) {
+        SDL_GL_DestroyContext(glctx);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        throw std::runtime_error("GrDirectContexts::MakeGL failed");
+    }
+
+    auto make_surface = [&](int w, int h) -> sk_sp<SkSurface> {
+        GLint fbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+        GLint samples = 0;
+        glGetIntegerv(GL_SAMPLES, &samples);
+        GLint stencil = 0;
+        glGetIntegerv(GL_STENCIL_BITS, &stencil);
+
+        GrGLFramebufferInfo fb_info;
+        fb_info.fFBOID = static_cast<GrGLuint>(fbo);
+        fb_info.fFormat = GL_RGBA8;
+
+        GrBackendRenderTarget backend_rt = GrBackendRenderTargets::MakeGL(w, h, samples, stencil, fb_info);
+        if (!backend_rt.isValid()) return nullptr;
+
+        return SkSurfaces::WrapBackendRenderTarget(
+            gr.get(),
+            backend_rt,
+            kBottomLeft_GrSurfaceOrigin,
+            kRGBA_8888_SkColorType,
+            nullptr,
+            nullptr
+        );
+    };
+
+    int pix_w = initial_w;
+    int pix_h = initial_h;
+    (void)SDL_GetWindowSizeInPixels(window, &pix_w, &pix_h);
+    if (pix_w <= 0 || pix_h <= 0) {
+        pix_w = initial_w;
+        pix_h = initial_h;
+    }
+
+    sk_sp<SkSurface> surface = make_surface(pix_w, pix_h);
+    if (!surface) {
+        SDL_GL_DestroyContext(glctx);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        throw std::runtime_error("SkSurfaces::WrapBackendRenderTarget failed");
+    }
+
+    reactcpp::UiEventQueue ui_events;
+    reactcpp::FrameMailbox frames;
+    reactcpp::PlatformCommandQueue platform_cmds;
+    reactcpp::ClipboardRpc clipboard;
+    reactcpp::PlatformBridge platform{&platform_cmds, &clipboard};
+
+    std::atomic<bool> worker_running{true};
+    std::thread worker([&] {
+        SkiaRuntime runtime(app, platform, pix_w, pix_h);
+        std::uint64_t frame_id = 0;
+
+        auto publish = [&](int w, int h) {
+            SkPictureRecorder recorder;
+            SkCanvas* record_canvas = recorder.beginRecording(SkRect::MakeWH(static_cast<float>(w), static_cast<float>(h)));
+            runtime.perform_update_if_needed();
+            runtime.draw(record_canvas, w, h);
+            sk_sp<SkPicture> pic = recorder.finishRecordingAsPicture();
+            reactcpp::Frame f;
+            f.picture = pic;
+            f.frame_id = ++frame_id;
+            frames.publish(std::move(f));
+        };
+
+        publish(pix_w, pix_h);
+
+        while (worker_running.load(std::memory_order_acquire)) {
+            reactcpp::UiEvent ev;
+            if (!ui_events.pop_wait(ev)) break;
+            if (ev.type == reactcpp::UiEventType::Quit) break;
+
+            switch (ev.type) {
+            case reactcpp::UiEventType::MouseButtonDown:
+                runtime.handle_mouse_button_down(ev.x, ev.y, ev.clicks);
+                break;
+            case reactcpp::UiEventType::MouseMotion:
+                runtime.handle_mouse_move(ev.x, ev.y);
+                break;
+            case reactcpp::UiEventType::MouseButtonUp:
+                runtime.handle_mouse_button_up(ev.x, ev.y);
+                break;
+            case reactcpp::UiEventType::MouseWheel:
+                runtime.handle_mouse_wheel(ev.wheel_y);
+                break;
+            case reactcpp::UiEventType::TextEditing:
+                runtime.handle_text_editing(ev.text.c_str(), ev.edit_start, ev.edit_length);
+                break;
+            case reactcpp::UiEventType::TextInput:
+                runtime.handle_text_input(ev.text.c_str());
+                break;
+            case reactcpp::UiEventType::KeyDown:
+                runtime.handle_key_down(ev.key, ev.mod, ev.repeat);
+                break;
+            case reactcpp::UiEventType::Quit:
+                break;
+            }
+
+            publish(pix_w, pix_h);
+        }
+
+        ui_events.stop();
+    });
+
+    auto apply_platform_cmds = [&] {
+        while (true) {
+            auto opt = platform_cmds.try_pop();
+            if (!opt) break;
+            const auto& cmd = *opt;
+            switch (cmd.type) {
+            case reactcpp::PlatformCmdType::StartTextInput: {
+                const SDL_PropertiesID props = SDL_CreateProperties();
+                if (props != 0) {
+                    (void)SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, cmd.multiline);
+                    (void)SDL_StartTextInputWithProperties(window, props);
+                    SDL_DestroyProperties(props);
+                } else {
+                    (void)SDL_StartTextInput(window);
+                }
+                break;
+            }
+            case reactcpp::PlatformCmdType::StopTextInput:
+                (void)SDL_StopTextInput(window);
+                break;
+            case reactcpp::PlatformCmdType::ClearComposition:
+                (void)SDL_ClearComposition(window);
+                break;
+            case reactcpp::PlatformCmdType::SetTextInputArea:
+                (void)SDL_SetTextInputArea(window, &cmd.rect, cmd.cursor_px);
+                break;
+            case reactcpp::PlatformCmdType::SetClipboardText:
+                (void)SDL_SetClipboardText(cmd.text.c_str());
+                break;
+            case reactcpp::PlatformCmdType::GetClipboardText: {
+                char* clip = SDL_GetClipboardText();
+                std::string text = clip ? std::string(clip) : std::string();
+                if (clip) SDL_free(clip);
+                clipboard.set_response(cmd.request_id, std::move(text));
+                break;
+            }
+            case reactcpp::PlatformCmdType::SetMouseCapture:
+                (void)SDL_CaptureMouse(cmd.mouse_capture);
+                break;
+            }
+        }
+    };
+
+    sk_sp<SkPicture> last_pic;
+    bool running = true;
+    while (running) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == REACTCPP_SDL_EVENT_QUIT) {
+                running = false;
+                break;
+            }
+
+            if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
+                reactcpp::UiEvent ev;
+                ev.type = reactcpp::UiEventType::MouseButtonDown;
+                ev.x = static_cast<float>(e.button.x);
+                ev.y = static_cast<float>(e.button.y);
+                ev.clicks = e.button.clicks;
+                ui_events.push(std::move(ev));
+            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_MOTION) {
+                if (e.motion.state & SDL_BUTTON_LMASK) {
+                    reactcpp::UiEvent ev;
+                    ev.type = reactcpp::UiEventType::MouseMotion;
+                    ev.x = static_cast<float>(e.motion.x);
+                    ev.y = static_cast<float>(e.motion.y);
+                    ui_events.push(std::move(ev));
+                }
+            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) {
+                reactcpp::UiEvent ev;
+                ev.type = reactcpp::UiEventType::MouseButtonUp;
+                ev.x = static_cast<float>(e.button.x);
+                ev.y = static_cast<float>(e.button.y);
+                ui_events.push(std::move(ev));
+            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_WHEEL) {
+                reactcpp::UiEvent ev;
+                ev.type = reactcpp::UiEventType::MouseWheel;
+                ev.wheel_y = e.wheel.y;
+                ui_events.push(std::move(ev));
+            } else if (e.type == REACTCPP_SDL_EVENT_TEXT_EDITING) {
+                reactcpp::UiEvent ev;
+                ev.type = reactcpp::UiEventType::TextEditing;
+                ev.text = e.edit.text ? std::string(e.edit.text) : std::string();
+                ev.edit_start = e.edit.start;
+                ev.edit_length = e.edit.length;
+                ui_events.push(std::move(ev));
+            } else if (e.type == REACTCPP_SDL_EVENT_TEXT_INPUT) {
+                reactcpp::UiEvent ev;
+                ev.type = reactcpp::UiEventType::TextInput;
+                ev.text = e.text.text ? std::string(e.text.text) : std::string();
+                ui_events.push(std::move(ev));
+            } else if (e.type == REACTCPP_SDL_EVENT_KEY_DOWN) {
+                reactcpp::UiEvent ev;
+                ev.type = reactcpp::UiEventType::KeyDown;
+                ev.key = e.key.key;
+                ev.mod = e.key.mod;
+                ev.repeat = e.key.repeat;
+                ui_events.push(std::move(ev));
+            }
+        }
+
+        apply_platform_cmds();
+
+        reactcpp::Frame f;
+        if (frames.try_consume(f) && f.picture) {
+            last_pic = f.picture;
+        }
+
+        int next_w = pix_w;
+        int next_h = pix_h;
+        if (SDL_GetWindowSizeInPixels(window, &next_w, &next_h) && next_w > 0 && next_h > 0) {
+            if (next_w != pix_w || next_h != pix_h) {
+                pix_w = next_w;
+                pix_h = next_h;
+                surface = make_surface(pix_w, pix_h);
+                if (!surface) {
+                    throw std::runtime_error("SkSurfaces::WrapBackendRenderTarget failed on resize");
+                }
+                glViewport(0, 0, pix_w, pix_h);
+            }
+        }
+
+        SkCanvas* canvas = surface->getCanvas();
+        canvas->clear(SK_ColorWHITE);
+        if (last_pic) {
+            canvas->drawPicture(last_pic);
+        }
+        skgpu::ganesh::FlushAndSubmit(surface.get());
+        (void)SDL_GL_SwapWindow(window);
+
+        SDL_Delay(1);
+    }
+
+    worker_running.store(false, std::memory_order_release);
+    ui_events.push(reactcpp::UiEvent{reactcpp::UiEventType::Quit});
+    ui_events.stop();
+    if (worker.joinable()) {
+        worker.join();
+    }
+
+    surface.reset();
+    gr.reset();
+    SDL_GL_DestroyContext(glctx);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return 0;
+
+#else
+
     const int width = 800;
     const int height = 600;
 
@@ -2187,8 +2527,55 @@ int run_skia_app(const AppRenderFunc& app) {
         throw std::runtime_error("SkSurface::MakeRasterDirect failed");
     }
 
-    SkiaRuntime runtime(app, window, width, height);
+    reactcpp::PlatformCommandQueue platform_cmds;
+    reactcpp::ClipboardRpc clipboard;
+    reactcpp::PlatformBridge platform{&platform_cmds, &clipboard};
+
+    SkiaRuntime runtime(app, platform, width, height);
     runtime.perform_update_if_needed();
+
+    auto apply_platform_cmds = [&] {
+        while (true) {
+            auto opt = platform_cmds.try_pop();
+            if (!opt) break;
+            const auto& cmd = *opt;
+            switch (cmd.type) {
+            case reactcpp::PlatformCmdType::StartTextInput: {
+                const SDL_PropertiesID props = SDL_CreateProperties();
+                if (props != 0) {
+                    (void)SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, cmd.multiline);
+                    (void)SDL_StartTextInputWithProperties(window, props);
+                    SDL_DestroyProperties(props);
+                } else {
+                    (void)SDL_StartTextInput(window);
+                }
+                break;
+            }
+            case reactcpp::PlatformCmdType::StopTextInput:
+                (void)SDL_StopTextInput(window);
+                break;
+            case reactcpp::PlatformCmdType::ClearComposition:
+                (void)SDL_ClearComposition(window);
+                break;
+            case reactcpp::PlatformCmdType::SetTextInputArea:
+                (void)SDL_SetTextInputArea(window, &cmd.rect, cmd.cursor_px);
+                break;
+            case reactcpp::PlatformCmdType::SetClipboardText:
+                (void)SDL_SetClipboardText(cmd.text.c_str());
+                break;
+            case reactcpp::PlatformCmdType::GetClipboardText: {
+                char* clip = SDL_GetClipboardText();
+                std::string text = clip ? std::string(clip) : std::string();
+                if (clip) SDL_free(clip);
+                clipboard.set_response(cmd.request_id, std::move(text));
+                break;
+            }
+            case reactcpp::PlatformCmdType::SetMouseCapture:
+                (void)SDL_CaptureMouse(cmd.mouse_capture);
+                break;
+            }
+        }
+    };
 
     bool running = true;
     while (running) {
@@ -2214,6 +2601,8 @@ int run_skia_app(const AppRenderFunc& app) {
                 runtime.handle_key_down(e.key.key, e.key.mod, e.key.repeat);
             }
         }
+
+        apply_platform_cmds();
 
         runtime.perform_update_if_needed();
 
@@ -2249,4 +2638,6 @@ int run_skia_app(const AppRenderFunc& app) {
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
+
+#endif
 }
