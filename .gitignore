@@ -1,5 +1,8 @@
 .sisyphus
 build
+build_raster
+build_ipc
+build_plain
 .cache
 .idea
 build-check/

@@ -1,5 +1,7 @@
 #include "element_dsl.hpp"
 
+#include <cstdio>
+#include <exception>
 #include <string>
 
 using namespace reactcpp::ui;
@@ -71,7 +73,12 @@ Element AppRoot() {
 }
 
 int main() {
-    return run_skia_app([]() {
-        return AppRoot();
-    });
+    try {
+        return run_skia_app([]() {
+            return AppRoot();
+        });
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "fatal: %s\n", e.what());
+        return 1;
+    }
 }
