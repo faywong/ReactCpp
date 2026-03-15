@@ -244,8 +244,8 @@ public:
         font.setTypeface(pick_typeface(ctx.font_mgr));
         const float text_y = baseline_for_centered_text(font, r.height);
 
-        const float pad_x = 8.0f;
-        const float pad_y = 8.0f;
+        const float pad_x = std::max(props.style.padding, 4.0f);
+        const float pad_y = std::max(props.style.padding, 4.0f);
         const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
         const float content_h = std::max(r.height - pad_y * 2.0f, 1.0f);
         const SkRect content_rect = SkRect::MakeXYWH(pad_x, pad_y, content_w, content_h);
@@ -368,8 +368,8 @@ public:
         border.setColor(make_color(props.border_r, props.border_g, props.border_b));
         canvas->drawRoundRect(bounds, 6.0f, 6.0f, border);
 
-        const float pad_x = 8.0f;
-        const float pad_y = 8.0f;
+        const float pad_x = std::max(props.style.padding, 4.0f);
+        const float pad_y = std::max(props.style.padding, 4.0f);
         const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
         const float content_h = std::max(r.height - pad_y * 2.0f, 1.0f);
         const SkRect content_rect = SkRect::MakeXYWH(pad_x, pad_y, content_w, content_h);
@@ -797,8 +797,8 @@ public:
             font.setTypeface(pick_typeface(font_mgr_));
             const float line_height = props.text_size * 1.4f;
 
-            const float pad_x = 8.0f;
-            const float pad_y = 8.0f;
+            const float pad_x = std::max(props.style.padding, 4.0f);
+            const float pad_y = std::max(props.style.padding, 4.0f);
             const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
             const float local_x = (x - abs_x) - pad_x;
             const float local_y = (y - abs_y) - pad_y;
@@ -877,8 +877,8 @@ public:
             font.setTypeface(pick_typeface(font_mgr_));
             const float line_height = props.text_size * 1.4f;
 
-            const float pad_x = 8.0f;
-            const float pad_y = 8.0f;
+            const float pad_x = std::max(props.style.padding, 4.0f);
+            const float pad_y = std::max(props.style.padding, 4.0f);
             const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
             const float local_x = (x - abs_x) - pad_x;
             const float local_y = (y - abs_y) - pad_y;
@@ -1239,8 +1239,8 @@ private:
         const auto& state = *node.editable_state;
         const LayoutRect r = layout_for_node(node);
 
-        const float pad_x = 8.0f;
-        const float pad_y = 8.0f;
+        const float pad_x = std::max(props.style.padding, 4.0f);
+        const float pad_y = std::max(props.style.padding, 4.0f);
         const float content_w = std::max(r.width - pad_x * 2.0f, 1.0f);
         const float visible_h = std::max(r.height - pad_y * 2.0f, 1.0f);
 
@@ -1509,8 +1509,9 @@ private:
         float cursor_line_y = 0.0f;
         std::optional<float> ime_line_height_surface;
         if (focused_input_->type == host_type_input_area()) {
-            const float pad_x = 8.0f;
-            const float pad_y = 8.0f;
+            const auto& props = std::get<InputAreaProps>(focused_input_->current_vnode.props);
+            const float pad_x = std::max(props.style.padding, 4.0f);
+            const float pad_y = std::max(props.style.padding, 4.0f);
             const float content_w = std::max(lr.width - pad_x * 2.0f, 1.0f);
 
             SkFontMetrics metrics;
@@ -1800,8 +1801,8 @@ private:
             : value;
         const std::size_t caret_index = composing ? (cursor + preedit.size()) : cursor;
 
-        const float pad_x = 8.0f;
-        const float pad_y = 8.0f;
+        const float pad_x = std::max(props.style.padding, 4.0f);
+        const float pad_y = std::max(props.style.padding, 4.0f);
         const float content_w = std::max(width - pad_x * 2.0f, 1.0f);
         const float content_h = std::max(height - pad_y * 2.0f, 1.0f);
         const SkRect content_rect = SkRect::MakeXYWH(pad_x, pad_y, content_w, content_h);

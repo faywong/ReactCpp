@@ -50,6 +50,14 @@ static void test_prefers_spaces() {
     expect_spans("hello   world", 5.0f, {"hello", "world"});
 }
 
+static void test_does_not_wrap_when_text_fits() {
+    expect_lines("hello world", 999.0f, {"hello world"});
+    expect_spans("hello world", 999.0f, {"hello world"});
+
+    expect_lines("a b c", 999.0f, {"a b c"});
+    expect_spans("a b c", 999.0f, {"a b c"});
+}
+
 static void test_prefers_punctuation_breaks() {
     expect_lines("hello,world", 6.0f, {"hello,", "world"});
     expect_lines("a,b,c", 2.0f, {"a,", "b,", "c"});
@@ -65,6 +73,16 @@ static void test_falls_back_to_utf8_boundary_when_no_breakpoints() {
     const std::string s = std::string("a") + "\xF0\x9F\x98\x8A" + "b";
     expect_lines(s, 2.0f, {std::string("a") + "\xF0\x9F\x98\x8A", "b"});
     expect_spans(s, 2.0f, {std::string("a") + "\xF0\x9F\x98\x8A", "b"});
+}
+
+static void test_breaks_long_word_after_space_to_fill_line() {
+    expect_lines("hello ABCDEFGHIJK", 8.0f, {"hello AB", "CDEFGHIJ", "K"});
+    expect_spans("hello ABCDEFGHIJK", 8.0f, {"hello AB", "CDEFGHIJ", "K"});
+}
+
+static void test_breaks_word_to_avoid_large_right_gap() {
+    expect_lines("hello wonderful", 10.0f, {"hello wond", "erful"});
+    expect_spans("hello wonderful", 10.0f, {"hello wond", "erful"});
 }
 
 static void test_point_to_byte_index_in_wrapped_text_basic() {
@@ -98,8 +116,11 @@ static void test_point_to_byte_index_in_wrapped_text_respects_scroll_y() {
 int main() {
     test_hard_breaks_on_newline();
     test_prefers_spaces();
+    test_does_not_wrap_when_text_fits();
     test_prefers_punctuation_breaks();
     test_falls_back_to_utf8_boundary_when_no_breakpoints();
+    test_breaks_long_word_after_space_to_fill_line();
+    test_breaks_word_to_avoid_large_right_gap();
     test_point_to_byte_index_in_wrapped_text_basic();
     test_point_to_byte_index_in_wrapped_text_respects_scroll_y();
     return 0;
