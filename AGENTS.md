@@ -3,14 +3,14 @@
 **Generated:** 2026-03-12
 
 ## OVERVIEW
-Small experimental repo for a native reactive GUI framework PoC built in C++20, with Skia (CPU raster) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
+Small experimental repo for a native reactive GUI framework PoC built in C++20, with Skia (Ganesh OpenGL by default, CPU raster fallback) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
 
 ## DESIGN GOALS & CONSTRAINTS
 - **Developer experience first**
   - Reactive, pure-functional style authoring (React/Revery-like components, hooks, declarative trees).
   - Minimize boilerplate needed to express GUI structure, state, and rendering behavior.
 - **Runtime performance first-class**
-  - Use Skia's display list (SkPicture) and CPU raster backend for high throughput.
+- Use Skia's display list (SkPicture) and a retained rendering backend (Ganesh GL with CPU raster fallback).
   - Cache per-widget drawing and reuse between frames when props/state/layout are unchanged.
 - **Language choices**
   - **Primary**: Modern C++ (C++20 and beyond, using newer/experimental features when they clearly improve expressiveness or safety).
@@ -31,7 +31,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
     ├── main.cpp          # SDL3 + Skia demo entry (uses skia_runtime)
     ├── element_dsl.hpp    # Fluent declarative Element DSL (reactcpp::ui)
     ├── skia_runtime.hpp  # Public UI API (Elements/Props/Hooks) + run_skia_app()
-    ├── skia_runtime.cpp  # SDL3 event loop + Skia CPU raster rendering + Yoga layout
+    ├── skia_runtime.cpp  # SDL3 event loop + Skia Ganesh GL (default) + CPU raster fallback + Yoga layout
     ├── yoga_shim.hpp     # Yoga header shim for <yoga/Yoga.h> vs <Yoga.h>
     ├── runtime.hpp       # Legacy console PoC runtime (kept for reference)
     └── runtime.cpp       # Legacy console PoC reconciler/renderer
@@ -70,7 +70,7 @@ Skia comes from [fonttools/skia-builder](https://github.com/fonttools/skia-build
 2. **Introduce Skia Rendering (Done)**
    - `react_cpp_sdl_skia_demo`:
      - Uses SDL3 for window and event loop.
-     - Uses a CPU raster `SkSurface` and renders the Element tree each frame.
+- Uses a Ganesh GL-backed `SkSurface` by default; if GL init fails, logs a warning and falls back to a CPU raster `SkSurface`.
 
 3. **Add SkPicture-Based Caching**
    - For each widget/node, maintain a `sk_sp<SkPicture>` cache:
@@ -322,6 +322,9 @@ Notes:
 - Evolve `src/runtime.*` toward a clean Virtual/Instance/Render separation and add `use_state`-driven demos.
 - Introduce a minimal SkPicture cache at the widget level, then iterate into subtree caching.
 - Only consider a Zig-based runtime after the C++ design reaches clear limits in ergonomics or safety.
+
+## OpenCode 需要遵守
+- 由于 Oracle Sub-Agent 会卡住没法返回，在启动 Oracle Sub-Agent 的时候，请你优先启动 'ultrabrain' Sub-Agent
 
 ## 代码提交规范
 - 请每次在特性分支/worktree 开发时，收到“提交代码”类请求时，自动将 feat 分支/worktree 合并到 main 分支。

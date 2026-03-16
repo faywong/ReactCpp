@@ -40,36 +40,20 @@ Run:
 ./build/reactcpp_demo
 ```
 
-## Rendering backend switches
+## Rendering backend
 
 By default the demo uses **Skia Ganesh (OpenGL)**.
 
-- **Enable CPU raster backend (explicit opt-in)**:
+The demo always attempts Ganesh GL first. If GL initialization fails at runtime,
+it automatically falls back to the CPU raster backend and prints a loud warning
+to stderr with a stable prefix:
 
-```bash
-cmake -S . -B build_cpu -DCMAKE_BUILD_TYPE=Release \
-  -DSKIA_BUILDER_ROOT=/path/to/your/skia-builder \
-  -DREACTCPP_USE_GANESH_GL=OFF \
-  -DREACTCPP_ENABLE_CPU_RASTER=ON
-cmake --build build_cpu -j --target reactcpp_demo
-./build_cpu/reactcpp_demo
+```
+[reactcpp][WARN][GL->CPU] ...
 ```
 
-- **Allow GL -> CPU fallback with a loud warning log** (keep GL on, enable CPU raster too):
-
-```bash
-cmake -S . -B build_fallback -DCMAKE_BUILD_TYPE=Release \
-  -DSKIA_BUILDER_ROOT=/path/to/your/skia-builder \
-  -DREACTCPP_ENABLE_CPU_RASTER=ON
-cmake --build build_fallback -j --target reactcpp_demo
-./build_fallback/reactcpp_demo
-```
-
-To test the fallback log, you can force a GL init failure:
-
-```bash
-REACTCPP_FORCE_GL_FAIL=1 ./build_fallback/reactcpp_demo
-```
+The initial window size is computed at runtime as **0.6x** the primary display's
+usable desktop bounds (no hard-coded 800x600).
 
 ## Notes
 

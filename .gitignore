@@ -7,6 +7,9 @@ build_ganesh_gl
 build_gl_default
 build_gl_plus_cpu
 build_cpu_only
+build_verify
+build_verify2
+build_verify*/
 .cache
 .idea
 build-check/
