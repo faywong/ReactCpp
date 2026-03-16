@@ -1041,6 +1041,7 @@ public:
         const float max_scroll = std::max(0.0f, metrics->content_h - metrics->visible_h);
 
         state.scroll_y = std::clamp(state.scroll_y - wheel_y * step, 0.0f, max_scroll);
+        state.scroll_y = std::round(state.scroll_y);
         mark_dirty(target);
         request_update();
     }
@@ -1446,6 +1447,7 @@ private:
             next = m->bottom - m->visible_h + margin;
         }
         next = std::clamp(next, 0.0f, max_scroll);
+        next = std::round(next);
 
         if (next != state.scroll_y) {
             state.scroll_y = next;
@@ -2330,6 +2332,8 @@ int run_react_app(const AppRenderFunc& app) {
         );
     };
 
+    GLint last_bound_fbo = -1;
+
     int pix_w = initial_w;
     int pix_h = initial_h;
     (void)SDL_GetWindowSizeInPixels(window, &pix_w, &pix_h);
@@ -2547,10 +2551,21 @@ int run_react_app(const AppRenderFunc& app) {
             continue;
         }
 
+        GLint bound_fbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound_fbo);
+        if (bound_fbo != last_bound_fbo) {
+            last_bound_fbo = bound_fbo;
+            sk_sp<SkSurface> next_surface = make_surface(pix_w, pix_h);
+            if (next_surface) {
+                surface = std::move(next_surface);
+            }
+        }
+
         SkCanvas* canvas = surface->getCanvas();
-        canvas->clear(SK_ColorWHITE);
         if (last_frame.picture) {
             canvas->drawPicture(last_frame.picture);
+        } else {
+            canvas->clear(SK_ColorWHITE);
         }
         skgpu::ganesh::FlushAndSubmit(surface.get());
         gr->submit(GrSyncCpu::kYes);
