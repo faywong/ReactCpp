@@ -3,9 +3,11 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "core/SkPicture.h"
 
@@ -19,6 +21,7 @@ enum class UiEventType {
     MouseButtonUp,
     MouseMotion,
     MouseWheel,
+    Resize,
     TextInput,
     TextEditing,
     KeyDown,
@@ -32,6 +35,9 @@ struct UiEvent {
     float wheel_y{0.0f};
     std::uint8_t clicks{0};
     std::uint8_t mouse_button{0};
+
+    int width{0};
+    int height{0};
 
     SDL_Keycode key{0};
     SDL_Keymod mod{SDL_KMOD_NONE};
@@ -152,6 +158,7 @@ private:
 
 struct Frame {
     sk_sp<SkPicture> picture;
+    std::vector<std::shared_ptr<SkPicture>> retained_pictures;
     std::uint64_t frame_id{0};
 };
 

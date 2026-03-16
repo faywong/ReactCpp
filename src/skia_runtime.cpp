@@ -827,6 +827,21 @@ public:
         render_cached_node(root_instance_, canvas, ctx);
     }
 
+    reactcpp::Frame render_to_frame(int width, int height) {
+        SkPictureRecorder recorder;
+        SkCanvas* record_canvas = recorder.beginRecording(
+            SkRect::MakeWH(static_cast<float>(width), static_cast<float>(height))
+        );
+
+        this->perform_update_if_needed();
+        this->draw(record_canvas, width, height);
+
+        reactcpp::Frame out;
+        out.picture = recorder.finishRecordingAsPicture();
+        collect_cached_pictures(root_instance_, out.retained_pictures);
+        return out;
+    }
+
     void handle_mouse_down(float x, float y) {
         handle_mouse_button_down(x, y, 1);
     }
@@ -2128,6 +2143,18 @@ private:
         canvas->restore();
     }
 
+    static void collect_cached_pictures(
+        const InstanceNode& node,
+        std::vector<std::shared_ptr<SkPicture>>& out
+    ) {
+        if (node.cached_picture) {
+            out.push_back(node.cached_picture);
+        }
+        for (const auto& child : node.children) {
+            collect_cached_pictures(*child, out);
+        }
+    }
+
     AppRenderFunc app_render_;
     InstanceNode root_instance_{};
     InstanceNode* focused_node_{nullptr};
@@ -2324,24 +2351,23 @@ int run_react_app(const AppRenderFunc& app) {
     reactcpp::ClipboardRpc clipboard;
     reactcpp::PlatformBridge platform{&platform_cmds, &clipboard};
 
+    std::atomic<int> shared_pix_w{pix_w};
+    std::atomic<int> shared_pix_h{pix_h};
+
     std::atomic<bool> worker_running{true};
     std::thread worker([&] {
         SkiaRuntime runtime(app, platform, pix_w, pix_h);
         std::uint64_t frame_id = 0;
 
-        auto publish = [&](int w, int h) {
-            SkPictureRecorder recorder;
-            SkCanvas* record_canvas = recorder.beginRecording(SkRect::MakeWH(static_cast<float>(w), static_cast<float>(h)));
-            runtime.perform_update_if_needed();
-            runtime.draw(record_canvas, w, h);
-            sk_sp<SkPicture> pic = recorder.finishRecordingAsPicture();
-            reactcpp::Frame f;
-            f.picture = pic;
+        auto publish = [&] {
+            const int w = shared_pix_w.load(std::memory_order_acquire);
+            const int h = shared_pix_h.load(std::memory_order_acquire);
+            reactcpp::Frame f = runtime.render_to_frame(w, h);
             f.frame_id = ++frame_id;
             frames.publish(std::move(f));
         };
 
-        publish(pix_w, pix_h);
+        publish();
 
         while (worker_running.load(std::memory_order_acquire)) {
             reactcpp::UiEvent ev;
@@ -2361,6 +2387,8 @@ int run_react_app(const AppRenderFunc& app) {
             case reactcpp::UiEventType::MouseWheel:
                 runtime.handle_mouse_wheel(ev.wheel_y);
                 break;
+            case reactcpp::UiEventType::Resize:
+                break;
             case reactcpp::UiEventType::TextEditing:
                 runtime.handle_text_editing(ev.text.c_str(), ev.edit_start, ev.edit_length);
                 break;
@@ -2374,7 +2402,7 @@ int run_react_app(const AppRenderFunc& app) {
                 break;
             }
 
-            publish(pix_w, pix_h);
+            publish();
         }
 
         ui_events.stop();
@@ -2423,7 +2451,7 @@ int run_react_app(const AppRenderFunc& app) {
         }
     };
 
-    sk_sp<SkPicture> last_pic;
+    reactcpp::Frame last_frame;
     bool running = true;
     while (running) {
         SDL_Event e;
@@ -2485,7 +2513,7 @@ int run_react_app(const AppRenderFunc& app) {
 
         reactcpp::Frame f;
         if (frames.try_consume(f) && f.picture) {
-            last_pic = f.picture;
+            last_frame = std::move(f);
         }
 
         int next_w = pix_w;
@@ -2499,13 +2527,21 @@ int run_react_app(const AppRenderFunc& app) {
                     surface = std::move(next_surface);
                     glViewport(0, 0, pix_w, pix_h);
                 }
+
+                shared_pix_w.store(pix_w, std::memory_order_release);
+                shared_pix_h.store(pix_h, std::memory_order_release);
+                reactcpp::UiEvent ev;
+                ev.type = reactcpp::UiEventType::Resize;
+                ev.width = pix_w;
+                ev.height = pix_h;
+                ui_events.push(std::move(ev));
             }
         }
 
         SkCanvas* canvas = surface->getCanvas();
         canvas->clear(SK_ColorWHITE);
-        if (last_pic) {
-            canvas->drawPicture(last_pic);
+        if (last_frame.picture) {
+            canvas->drawPicture(last_frame.picture);
         }
         skgpu::ganesh::FlushAndSubmit(surface.get());
         (void)SDL_GL_SwapWindow(window);
