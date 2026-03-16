@@ -74,7 +74,7 @@ Element AppRoot() {
 
 int main() {
     try {
-        return run_skia_app([]() {
+        return run_reactcpp_app([]() {
             return AppRoot();
         });
     } catch (const std::exception& e) {

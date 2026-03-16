@@ -2160,7 +2160,7 @@ Element InputArea(const InputAreaProps& props, std::vector<Element> children) {
     return e;
 }
 
-int run_skia_app(const AppRenderFunc& app) {
+int run_reactcpp_app(const AppRenderFunc& app) {
     SDL_SetMainReady();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
