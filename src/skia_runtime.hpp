@@ -329,4 +329,4 @@ StateHandle<T> use_state(const T& initial) {
 
 using AppRenderFunc = std::function<Element()>;
 
-int run_reactcpp_app(const AppRenderFunc& app);
+int run_react_app(const AppRenderFunc& app);
