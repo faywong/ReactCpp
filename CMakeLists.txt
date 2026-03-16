@@ -13,7 +13,9 @@ include(FetchContent)
 
 option(REACTCPP_BUILD_DEMO "Build SDL+Skia demo (requires external skia-builder)" ON)
 
-option(REACTCPP_USE_GANESH_GL "Use Skia Ganesh GL backend for demo" OFF)
+option(REACTCPP_USE_GANESH_GL "Use Skia Ganesh GL backend for demo" ON)
+
+option(REACTCPP_ENABLE_CPU_RASTER "Enable CPU raster backend (explicit opt-in)" OFF)
 
 set(SKIA_BUILDER_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder")
 set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Path to skia-builder directory")
@@ -56,6 +58,10 @@ if (REACTCPP_BUILD_DEMO)
         target_compile_definitions(reactcpp_demo PRIVATE REACTCPP_USE_GANESH_GL=1)
         find_package(OpenGL REQUIRED)
         target_link_libraries(reactcpp_demo PRIVATE OpenGL::GL)
+    endif()
+
+    if (REACTCPP_ENABLE_CPU_RASTER)
+        target_compile_definitions(reactcpp_demo PRIVATE REACTCPP_ENABLE_CPU_RASTER=1)
     endif()
 
     add_executable(react_cpp_skia_runtime_input_area_enter_tests

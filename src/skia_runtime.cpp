@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -34,6 +36,7 @@
 #if defined(REACTCPP_USE_GANESH_GL)
 #include "gpu/ganesh/GrDirectContext.h"
 #include "gpu/ganesh/GrBackendSurface.h"
+#include "gpu/ganesh/gl/GrGLAssembleInterface.h"
 #include "gpu/ganesh/gl/GrGLBackendSurface.h"
 #include "gpu/ganesh/gl/GrGLDirectContext.h"
 #include "gpu/ganesh/gl/GrGLInterface.h"
@@ -2166,7 +2169,11 @@ int run_reactcpp_app(const AppRenderFunc& app) {
         throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
     }
 
+    std::optional<std::string> gl_failure;
+
 #if defined(REACTCPP_USE_GANESH_GL)
+
+    try {
 
     (void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     (void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -2185,37 +2192,44 @@ int run_reactcpp_app(const AppRenderFunc& app) {
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
     );
     if (!window) {
-        SDL_Quit();
         throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
     }
 
     SDL_GLContext glctx = SDL_GL_CreateContext(window);
     if (!glctx) {
         SDL_DestroyWindow(window);
-        SDL_Quit();
         throw std::runtime_error(std::string("SDL_GL_CreateContext failed: ") + SDL_GetError());
     }
     if (!SDL_GL_MakeCurrent(window, glctx)) {
         SDL_GL_DestroyContext(glctx);
         SDL_DestroyWindow(window);
-        SDL_Quit();
         throw std::runtime_error(std::string("SDL_GL_MakeCurrent failed: ") + SDL_GetError());
     }
     (void)SDL_GL_SetSwapInterval(1);
 
-    auto gl_interface = GrGLMakeNativeInterface();
+    if (const char* force = std::getenv("REACTCPP_FORCE_GL_FAIL")) {
+        if (std::string(force) == "1") {
+            SDL_GL_DestroyContext(glctx);
+            SDL_DestroyWindow(window);
+            throw std::runtime_error("REACTCPP_FORCE_GL_FAIL=1: forced Ganesh GL init failure");
+        }
+    }
+
+    auto get_proc = [](void*, const char name[]) -> GrGLFuncPtr {
+        return reinterpret_cast<GrGLFuncPtr>(SDL_GL_GetProcAddress(name));
+    };
+
+    auto gl_interface = GrGLMakeAssembledInterface(nullptr, get_proc);
     if (!gl_interface || !gl_interface->validate()) {
         SDL_GL_DestroyContext(glctx);
         SDL_DestroyWindow(window);
-        SDL_Quit();
-        throw std::runtime_error("GrGLMakeNativeInterface failed");
+        throw std::runtime_error("GrGLMakeAssembledInterface failed");
     }
 
     auto gr = GrDirectContexts::MakeGL(gl_interface);
     if (!gr) {
         SDL_GL_DestroyContext(glctx);
         SDL_DestroyWindow(window);
-        SDL_Quit();
         throw std::runtime_error("GrDirectContexts::MakeGL failed");
     }
 
@@ -2256,7 +2270,6 @@ int run_reactcpp_app(const AppRenderFunc& app) {
     if (!surface) {
         SDL_GL_DestroyContext(glctx);
         SDL_DestroyWindow(window);
-        SDL_Quit();
         throw std::runtime_error("SkSurfaces::WrapBackendRenderTarget failed");
     }
 
@@ -2436,11 +2449,11 @@ int run_reactcpp_app(const AppRenderFunc& app) {
             if (next_w != pix_w || next_h != pix_h) {
                 pix_w = next_w;
                 pix_h = next_h;
-                surface = make_surface(pix_w, pix_h);
-                if (!surface) {
-                    throw std::runtime_error("SkSurfaces::WrapBackendRenderTarget failed on resize");
+                sk_sp<SkSurface> next_surface = make_surface(pix_w, pix_h);
+                if (next_surface) {
+                    surface = std::move(next_surface);
+                    glViewport(0, 0, pix_w, pix_h);
                 }
-                glViewport(0, 0, pix_w, pix_h);
             }
         }
 
@@ -2468,8 +2481,25 @@ int run_reactcpp_app(const AppRenderFunc& app) {
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
+    } catch (const std::exception& e) {
+        gl_failure = e.what();
+    }
 
-#else
+#endif
+
+#if defined(REACTCPP_ENABLE_CPU_RASTER)
+
+    if (gl_failure) {
+        const char* driver = SDL_GetCurrentVideoDriver();
+        std::fprintf(
+            stderr,
+            "[reactcpp][WARN][GL->CPU] Ganesh GL init failed; falling back to CPU raster (REACTCPP_ENABLE_CPU_RASTER=ON).\n"
+            "  reason: %s\n"
+            "  sdl_video_driver: %s\n",
+            gl_failure->c_str(),
+            driver ? driver : "(unknown)"
+        );
+    }
 
     const int width = 800;
     const int height = 600;
@@ -2638,6 +2668,16 @@ int run_reactcpp_app(const AppRenderFunc& app) {
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
+
+#else
+
+    SDL_Quit();
+    if (gl_failure) {
+        throw std::runtime_error(std::string("Ganesh GL init failed: ") + *gl_failure);
+    }
+    throw std::runtime_error(
+        "CPU raster backend is disabled. Configure with -DREACTCPP_ENABLE_CPU_RASTER=ON to allow GL->CPU fallback."
+    );
 
 #endif
 }

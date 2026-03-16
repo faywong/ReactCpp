@@ -3,6 +3,10 @@ build
 build_raster
 build_ipc
 build_plain
+build_ganesh_gl
+build_gl_default
+build_gl_plus_cpu
+build_cpu_only
 .cache
 .idea
 build-check/
