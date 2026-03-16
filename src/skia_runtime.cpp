@@ -2511,9 +2511,11 @@ int run_react_app(const AppRenderFunc& app) {
 
         apply_platform_cmds();
 
+        bool need_present = false;
         reactcpp::Frame f;
         if (frames.try_consume(f) && f.picture) {
             last_frame = std::move(f);
+            need_present = true;
         }
 
         int next_w = pix_w;
@@ -2535,7 +2537,14 @@ int run_react_app(const AppRenderFunc& app) {
                 ev.width = pix_w;
                 ev.height = pix_h;
                 ui_events.push(std::move(ev));
+
+                need_present = true;
             }
+        }
+
+        if (!need_present) {
+            SDL_Delay(1);
+            continue;
         }
 
         SkCanvas* canvas = surface->getCanvas();
@@ -2544,6 +2553,7 @@ int run_react_app(const AppRenderFunc& app) {
             canvas->drawPicture(last_frame.picture);
         }
         skgpu::ganesh::FlushAndSubmit(surface.get());
+        gr->submit(GrSyncCpu::kYes);
         (void)SDL_GL_SwapWindow(window);
 
         SDL_Delay(1);
