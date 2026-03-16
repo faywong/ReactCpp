@@ -33,7 +33,6 @@
 #include "core/SkSurface.h"
 #include "core/SkTypeface.h"
 
-#if defined(REACTCPP_USE_GANESH_GL)
 #include "gpu/ganesh/GrDirectContext.h"
 #include "gpu/ganesh/GrBackendSurface.h"
 #include "gpu/ganesh/gl/GrGLAssembleInterface.h"
@@ -42,7 +41,6 @@
 #include "gpu/ganesh/gl/GrGLInterface.h"
 #include "gpu/ganesh/gl/GrGLTypes.h"
 #include "gpu/ganesh/SkSurfaceGanesh.h"
-#endif
 
 #include "effects/SkGradientShader.h"
 
@@ -53,9 +51,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
-#if defined(REACTCPP_USE_GANESH_GL)
 #include <SDL3/SDL_opengl.h>
-#endif
 
 #include "render_thread.hpp"
 
@@ -72,6 +68,66 @@
 thread_local HookDispatcher g_skia_dispatcher;
 
 namespace {
+
+static SDL_DisplayID pick_primary_display_id() {
+    SDL_DisplayID primary = SDL_GetPrimaryDisplay();
+    if (primary != 0) return primary;
+
+    int count = 0;
+    SDL_DisplayID* displays = SDL_GetDisplays(&count);
+    SDL_DisplayID first = 0;
+    if (displays) {
+        first = displays[0];
+        SDL_free(displays);
+    }
+    return first;
+}
+
+static std::pair<int, int> compute_initial_window_size_60pct() {
+    const SDL_DisplayID display = pick_primary_display_id();
+
+    int base_w = 0;
+    int base_h = 0;
+
+    if (display != 0) {
+        SDL_Rect usable{};
+        if (SDL_GetDisplayUsableBounds(display, &usable)) {
+            base_w = usable.w;
+            base_h = usable.h;
+        } else {
+            if (const SDL_DisplayMode* dm = SDL_GetDesktopDisplayMode(display)) {
+                base_w = dm->w;
+                base_h = dm->h;
+            }
+        }
+    }
+
+    if (base_w <= 0 || base_h <= 0) {
+        base_w = 1280;
+        base_h = 720;
+    }
+
+    const float kScale = 0.6f;
+    int w = static_cast<int>(static_cast<float>(base_w) * kScale);
+    int h = static_cast<int>(static_cast<float>(base_h) * kScale);
+
+    w = std::max(w, 640);
+    h = std::max(h, 480);
+
+    return {w, h};
+}
+
+static void log_gl_to_cpu_fallback(const std::string& reason) {
+    const char* driver = SDL_GetCurrentVideoDriver();
+    std::fprintf(
+        stderr,
+        "[reactcpp][WARN][GL->CPU] Ganesh GL init failed; falling back to CPU raster.\n"
+        "  reason: %s\n"
+        "  sdl_video_driver: %s\n",
+        reason.c_str(),
+        driver ? driver : "(unknown)"
+    );
+}
 
 struct DrawContext {
     int surface_width{0};
@@ -2082,8 +2138,8 @@ private:
     bool mouse_selecting_{false};
     InstanceNode* mouse_select_target_{nullptr};
 
-    int surface_width_{800};
-    int surface_height_{600};
+    int surface_width_{0};
+    int surface_height_{0};
 
     reactcpp::PlatformBridge platform_{};
     std::optional<SDL_Rect> last_text_input_area_;
@@ -2171,8 +2227,6 @@ int run_reactcpp_app(const AppRenderFunc& app) {
 
     std::optional<std::string> gl_failure;
 
-#if defined(REACTCPP_USE_GANESH_GL)
-
     try {
 
     (void)SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -2182,14 +2236,13 @@ int run_reactcpp_app(const AppRenderFunc& app) {
     (void)SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
     (void)SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
-    const int initial_w = 800;
-    const int initial_h = 600;
+    const auto [initial_w, initial_h] = compute_initial_window_size_60pct();
 
     SDL_Window* window = SDL_CreateWindow(
         "ReactCpp GUI Demo",
         initial_w,
         initial_h,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
     );
     if (!window) {
         throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
@@ -2206,14 +2259,6 @@ int run_reactcpp_app(const AppRenderFunc& app) {
         throw std::runtime_error(std::string("SDL_GL_MakeCurrent failed: ") + SDL_GetError());
     }
     (void)SDL_GL_SetSwapInterval(1);
-
-    if (const char* force = std::getenv("REACTCPP_FORCE_GL_FAIL")) {
-        if (std::string(force) == "1") {
-            SDL_GL_DestroyContext(glctx);
-            SDL_DestroyWindow(window);
-            throw std::runtime_error("REACTCPP_FORCE_GL_FAIL=1: forced Ganesh GL init failure");
-        }
-    }
 
     auto get_proc = [](void*, const char name[]) -> GrGLFuncPtr {
         return reinterpret_cast<GrGLFuncPtr>(SDL_GL_GetProcAddress(name));
@@ -2485,34 +2530,29 @@ int run_reactcpp_app(const AppRenderFunc& app) {
         gl_failure = e.what();
     }
 
-#endif
-
-#if defined(REACTCPP_ENABLE_CPU_RASTER)
-
     if (gl_failure) {
-        const char* driver = SDL_GetCurrentVideoDriver();
-        std::fprintf(
-            stderr,
-            "[reactcpp][WARN][GL->CPU] Ganesh GL init failed; falling back to CPU raster (REACTCPP_ENABLE_CPU_RASTER=ON).\n"
-            "  reason: %s\n"
-            "  sdl_video_driver: %s\n",
-            gl_failure->c_str(),
-            driver ? driver : "(unknown)"
-        );
+        log_gl_to_cpu_fallback(*gl_failure);
     }
 
-    const int width = 800;
-    const int height = 600;
+    const auto [width, height] = compute_initial_window_size_60pct();
 
     SDL_Window* window = SDL_CreateWindow(
         "ReactCpp GUI Demo",
         width,
         height,
-        SDL_WINDOW_RESIZABLE
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
     );
     if (!window) {
         SDL_Quit();
         throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
+    }
+
+    int pix_w = width;
+    int pix_h = height;
+    (void)SDL_GetWindowSizeInPixels(window, &pix_w, &pix_h);
+    if (pix_w <= 0 || pix_h <= 0) {
+        pix_w = width;
+        pix_h = height;
     }
 
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
@@ -2526,8 +2566,8 @@ int run_reactcpp_app(const AppRenderFunc& app) {
         renderer,
         SDL_PIXELFORMAT_BGRA8888,
         SDL_TEXTUREACCESS_STREAMING,
-        width,
-        height
+        pix_w,
+        pix_h
     );
     if (!texture) {
         SDL_DestroyRenderer(renderer);
@@ -2537,17 +2577,17 @@ int run_reactcpp_app(const AppRenderFunc& app) {
     }
 
     SkImageInfo info = SkImageInfo::Make(
-        width,
-        height,
+        pix_w,
+        pix_h,
         kBGRA_8888_SkColorType,
         kPremul_SkAlphaType
     );
 
-    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(width) * height);
+    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(pix_w) * pix_h);
     auto surface = SkSurfaces::WrapPixels(
         info,
         pixels.data(),
-        static_cast<size_t>(width) * 4
+        static_cast<size_t>(pix_w) * 4
     );
     if (!surface) {
         SDL_DestroyTexture(texture);
@@ -2561,7 +2601,7 @@ int run_reactcpp_app(const AppRenderFunc& app) {
     reactcpp::ClipboardRpc clipboard;
     reactcpp::PlatformBridge platform{&platform_cmds, &clipboard};
 
-    SkiaRuntime runtime(app, platform, width, height);
+    SkiaRuntime runtime(app, platform, pix_w, pix_h);
     runtime.perform_update_if_needed();
 
     auto apply_platform_cmds = [&] {
@@ -2634,10 +2674,47 @@ int run_reactcpp_app(const AppRenderFunc& app) {
 
         apply_platform_cmds();
 
+        int next_w = pix_w;
+        int next_h = pix_h;
+        if (SDL_GetWindowSizeInPixels(window, &next_w, &next_h) && next_w > 0 && next_h > 0) {
+            if (next_w != pix_w || next_h != pix_h) {
+                pix_w = next_w;
+                pix_h = next_h;
+
+                SDL_DestroyTexture(texture);
+                texture = SDL_CreateTexture(
+                    renderer,
+                    SDL_PIXELFORMAT_BGRA8888,
+                    SDL_TEXTUREACCESS_STREAMING,
+                    pix_w,
+                    pix_h
+                );
+                if (!texture) {
+                    throw std::runtime_error(std::string("SDL_CreateTexture failed: ") + SDL_GetError());
+                }
+
+                info = SkImageInfo::Make(
+                    pix_w,
+                    pix_h,
+                    kBGRA_8888_SkColorType,
+                    kPremul_SkAlphaType
+                );
+                pixels.assign(static_cast<std::size_t>(pix_w) * pix_h, 0);
+                surface = SkSurfaces::WrapPixels(
+                    info,
+                    pixels.data(),
+                    static_cast<size_t>(pix_w) * 4
+                );
+                if (!surface) {
+                    throw std::runtime_error("SkSurface::MakeRasterDirect failed");
+                }
+            }
+        }
+
         runtime.perform_update_if_needed();
 
         SkCanvas* canvas = surface->getCanvas();
-        runtime.draw(canvas, width, height);
+        runtime.draw(canvas, pix_w, pix_h);
 
         void* texPixels = nullptr;
         int pitch = 0;
@@ -2645,11 +2722,11 @@ int run_reactcpp_app(const AppRenderFunc& app) {
             throw std::runtime_error(std::string("SDL_LockTexture failed: ") + SDL_GetError());
         }
 
-        for (int y = 0; y < height; ++y) {
+        for (int y = 0; y < pix_h; ++y) {
             std::memcpy(
                 static_cast<std::uint8_t*>(texPixels) + y * pitch,
-                pixels.data() + static_cast<std::size_t>(y) * width,
-                static_cast<std::size_t>(width) * 4
+                pixels.data() + static_cast<std::size_t>(y) * pix_w,
+                static_cast<std::size_t>(pix_w) * 4
             );
         }
 
@@ -2668,16 +2745,4 @@ int run_reactcpp_app(const AppRenderFunc& app) {
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
-
-#else
-
-    SDL_Quit();
-    if (gl_failure) {
-        throw std::runtime_error(std::string("Ganesh GL init failed: ") + *gl_failure);
-    }
-    throw std::runtime_error(
-        "CPU raster backend is disabled. Configure with -DREACTCPP_ENABLE_CPU_RASTER=ON to allow GL->CPU fallback."
-    );
-
-#endif
 }
