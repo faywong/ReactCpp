@@ -278,6 +278,21 @@ render_cached_node()
   +-- else: draw cached picture
 ```
 
+### Ganesh GL mode: worker-thread frame recording + main-thread present
+
+In the Ganesh (OpenGL) backend path (`src/skia_runtime.cpp`), rendering is split across two threads:
+
+- **Main thread** (SDL thread affinity):
+  - Drains SDL events (`SDL_PollEvent`) and forwards them to a worker via `reactcpp::UiEventQueue`.
+  - Applies platform commands from the runtime (IME text input area, clipboard, mouse capture) via `reactcpp::PlatformCommandQueue`.
+  - Consumes the latest rendered frame from `reactcpp::FrameMailbox` and presents it to the window backbuffer.
+  - Presents only when a new frame arrives or when the window pixel size changes; flushes and submits to the GPU, then blocks on `GrDirectContext::submit(GrSyncCpu::kYes)` before `SDL_GL_SwapWindow` to avoid partial presents.
+
+- **Worker thread** (UI runtime + recording):
+  - Owns `SkiaRuntime` (virtual tree rebuild + reconcile + Yoga layout + per-node SkPicture caching).
+  - For each forwarded UI event, produces a new **frame SkPicture** via `SkPictureRecorder` and publishes it through `FrameMailbox`.
+  - Each published `reactcpp::Frame` also carries `retained_pictures`, which keeps strong references to per-node cached pictures used during frame recording so the main thread can safely draw a frame even if the worker overwrites caches concurrently.
+
 Notes:
 - The VNodeTree is rebuilt by `app_render_()` inside `render_frame()`. Skipping `render_frame()` (when `update_requested_ == false`) is what avoids rebuilding the VNodeTree.
 - Input IME handling (editable nodes):
