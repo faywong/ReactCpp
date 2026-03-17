@@ -1672,7 +1672,10 @@ private:
                 }
 
                 cursor_x = pad_x + measure(std::string_view(display).substr(line_start, within - line_start));
-                cursor_line_y = pad_y + static_cast<float>(line_index) * line_height - state.scroll_y;
+                cursor_line_y = pad_y + static_cast<float>(line_index) * line_height;
+                if (composing) {
+                    cursor_line_y -= state.scroll_y;
+                }
             }
         } else {
             if (!state.preedit.empty()) {
@@ -2307,6 +2310,10 @@ int run_react_app(const AppRenderFunc& app) {
         throw std::runtime_error("GrDirectContexts::MakeGL failed");
     }
 
+    using GlBindFramebufferFn = void (*)(GLenum, GLuint);
+    const GlBindFramebufferFn gl_bind_framebuffer =
+        reinterpret_cast<GlBindFramebufferFn>(SDL_GL_GetProcAddress("glBindFramebuffer"));
+
     auto make_surface = [&](int w, int h) -> sk_sp<SkSurface> {
         GLint fbo = 0;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
@@ -2359,8 +2366,20 @@ int run_react_app(const AppRenderFunc& app) {
     std::atomic<int> shared_pix_h{pix_h};
 
     std::atomic<bool> worker_running{true};
-    std::thread worker([&] {
-        SkiaRuntime runtime(app, platform, pix_w, pix_h);
+    const int worker_start_w = shared_pix_w.load(std::memory_order_acquire);
+    const int worker_start_h = shared_pix_h.load(std::memory_order_acquire);
+    std::thread worker([
+        app,
+        platform,
+        &ui_events,
+        &frames,
+        &shared_pix_w,
+        &shared_pix_h,
+        &worker_running,
+        worker_start_w,
+        worker_start_h
+    ] {
+        SkiaRuntime runtime(app, platform, worker_start_w, worker_start_h);
         std::uint64_t frame_id = 0;
 
         auto publish = [&] {
@@ -2569,6 +2588,9 @@ int run_react_app(const AppRenderFunc& app) {
         }
         skgpu::ganesh::FlushAndSubmit(surface.get());
         gr->submit(GrSyncCpu::kYes);
+        if (gl_bind_framebuffer) {
+            gl_bind_framebuffer(GL_FRAMEBUFFER, 0);
+        }
         (void)SDL_GL_SwapWindow(window);
 
         SDL_Delay(1);

@@ -70,6 +70,20 @@ if (REACTCPP_BUILD_DEMO)
 
     add_test(NAME skia_runtime_input_area_enter_tests COMMAND react_cpp_skia_runtime_input_area_enter_tests)
 
+    add_executable(react_cpp_skia_runtime_ime_area_scroll_tests
+        tests/skia_runtime_ime_area_scroll_tests.cpp
+    )
+
+    # This test includes src/skia_runtime.cpp directly and therefore needs GL symbols.
+    target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE OpenGL::GL)
+
+    target_include_directories(react_cpp_skia_runtime_ime_area_scroll_tests
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+
+    add_test(NAME skia_runtime_ime_area_scroll_tests COMMAND react_cpp_skia_runtime_ime_area_scroll_tests)
+
     add_executable(react_cpp_skia_runtime_frame_retention_tests
         tests/skia_runtime_frame_retention_tests.cpp
     )
@@ -173,6 +187,11 @@ if (REACTCPP_SDL_INCLUDE_DIRS)
         PRIVATE
             ${REACTCPP_SDL_INCLUDE_DIRS}
     )
+
+    target_include_directories(react_cpp_skia_runtime_ime_area_scroll_tests
+        PRIVATE
+            ${REACTCPP_SDL_INCLUDE_DIRS}
+    )
 endif()
 
 if (REACTCPP_SDL_CFLAGS_OTHER)
@@ -187,6 +206,11 @@ if (REACTCPP_SDL_CFLAGS_OTHER)
     )
 
     target_compile_options(react_cpp_skia_runtime_frame_retention_tests
+        PRIVATE
+            ${REACTCPP_SDL_CFLAGS_OTHER}
+    )
+
+    target_compile_options(react_cpp_skia_runtime_ime_area_scroll_tests
         PRIVATE
             ${REACTCPP_SDL_CFLAGS_OTHER}
     )
@@ -207,6 +231,11 @@ if (REACTCPP_SDL_IMPORTED_TARGET)
         PRIVATE
             ${REACTCPP_SDL_IMPORTED_TARGET}
     )
+
+    target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
+        PRIVATE
+            ${REACTCPP_SDL_IMPORTED_TARGET}
+    )
 else()
     target_link_libraries(reactcpp_demo
         PRIVATE
@@ -219,6 +248,11 @@ else()
     )
 
     target_link_libraries(react_cpp_skia_runtime_frame_retention_tests
+        PRIVATE
+            ${REACTCPP_SDL_LIBRARIES}
+    )
+
+    target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
         PRIVATE
             ${REACTCPP_SDL_LIBRARIES}
     )
@@ -256,6 +290,12 @@ target_include_directories(react_cpp_skia_runtime_frame_retention_tests
         "${SKIA_ROOT}"
 )
 
+target_include_directories(react_cpp_skia_runtime_ime_area_scroll_tests
+    PRIVATE
+        "${SKIA_ROOT}/include"
+        "${SKIA_ROOT}"
+)
+
 target_link_libraries(reactcpp_demo
     PRIVATE
         "${SKIA_LIB_PATH}"
@@ -267,6 +307,11 @@ target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
 )
 
 target_link_libraries(react_cpp_skia_runtime_frame_retention_tests
+    PRIVATE
+        "${SKIA_LIB_PATH}"
+)
+
+target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
     PRIVATE
         "${SKIA_LIB_PATH}"
 )
@@ -284,6 +329,11 @@ if (EXISTS "${SKIA_SKCMS_LIB_PATH}")
     )
 
     target_link_libraries(react_cpp_skia_runtime_frame_retention_tests
+        PRIVATE
+            "${SKIA_SKCMS_LIB_PATH}"
+    )
+
+    target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
         PRIVATE
             "${SKIA_SKCMS_LIB_PATH}"
     )
@@ -321,6 +371,13 @@ if (PkgConfig_FOUND)
                 ${HARFBUZZ_INCLUDE_DIRS}
         )
 
+        target_include_directories(react_cpp_skia_runtime_ime_area_scroll_tests
+            PRIVATE
+                ${FREETYPE2_INCLUDE_DIRS}
+                ${FONTCONFIG_INCLUDE_DIRS}
+                ${HARFBUZZ_INCLUDE_DIRS}
+        )
+
         target_compile_options(reactcpp_demo
             PRIVATE
                 ${FREETYPE2_CFLAGS_OTHER}
@@ -336,6 +393,13 @@ if (PkgConfig_FOUND)
         )
 
         target_compile_options(react_cpp_skia_runtime_frame_retention_tests
+            PRIVATE
+                ${FREETYPE2_CFLAGS_OTHER}
+                ${FONTCONFIG_CFLAGS_OTHER}
+                ${HARFBUZZ_CFLAGS_OTHER}
+        )
+
+        target_compile_options(react_cpp_skia_runtime_ime_area_scroll_tests
             PRIVATE
                 ${FREETYPE2_CFLAGS_OTHER}
                 ${FONTCONFIG_CFLAGS_OTHER}
@@ -370,6 +434,15 @@ if (PkgConfig_FOUND)
                 m
                 dl
         )
+
+        target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
+            PRIVATE
+                ${FONTCONFIG_LIBRARIES}
+                ${FREETYPE2_LIBRARIES}
+                ${HARFBUZZ_LIBRARIES}
+                m
+                dl
+        )
     else()
         message(WARNING "pkg-config did not find all Skia font deps (freetype2/fontconfig/harfbuzz). If your Skia build has text enabled, linking may fail.")
     endif()
@@ -388,6 +461,12 @@ target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
 )
 
 target_link_libraries(react_cpp_skia_runtime_frame_retention_tests
+    PRIVATE
+        Threads::Threads
+        yogacore
+)
+
+target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
     PRIVATE
         Threads::Threads
         yogacore
