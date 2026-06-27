@@ -1,0 +1,25 @@
+ReactCpp Dual License
+=====================
+
+SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-ReactCpp-Commercial
+
+ReactCpp is available under a dual-license model:
+
+1. GNU General Public License v3.0
+
+   You may use, copy, modify, and distribute this software under the terms of
+   the GNU General Public License version 3.0.
+
+   The GPL v3 license text is available at:
+   https://www.gnu.org/licenses/gpl-3.0.en.html
+
+2. Commercial License
+
+   If you want to use ReactCpp under terms different from GPL v3, including
+   proprietary, closed-source, or other commercial distribution terms, you must
+   obtain a separate commercial license grant.
+
+   Contact faywanghq@gmail.com to request a commercial license grant.
+
+Unless you have received a separate written commercial license grant, your use
+of this software is governed by GPL v3.
