@@ -60,7 +60,43 @@ static void test_frame_retains_nested_cached_pictures_across_rerecord() {
     }
 }
 
+static void test_canvas_drawio_frame_records() {
+    CanvasProps canvas;
+    canvas.style.width = 320.0f;
+    canvas.style.height = 160.0f;
+    canvas.drawio_xml = R"drawio(
+<mxGraphModel>
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="a" value="A" style="rounded=1;fillColor=#DBEAFE;strokeColor=#2563EB;" vertex="1" parent="1">
+      <mxGeometry x="20" y="20" width="80" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="b" value="B" style="ellipse;fillColor=#DCFCE7;strokeColor=#16A34A;" vertex="1" parent="1">
+      <mxGeometry x="180" y="20" width="80" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="e" style="strokeColor=#6B7280;" edge="1" parent="1" source="a" target="b">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+  </root>
+</mxGraphModel>
+)drawio";
+
+    auto app = [&] {
+        ViewProps root;
+        root.style.width = 340.0f;
+        root.style.height = 180.0f;
+        return View(root, {Canvas(canvas)});
+    };
+
+    SkiaRuntime rt(app, reactcpp::PlatformBridge{}, 800, 600);
+    const reactcpp::Frame frame = rt.render_to_frame(340, 180);
+    REACTCPP_TEST_ASSERT(frame.picture);
+    REACTCPP_TEST_ASSERT(!frame.retained_pictures.empty());
+}
+
 int main() {
     test_frame_retains_nested_cached_pictures_across_rerecord();
+    test_canvas_drawio_frame_records();
     return 0;
 }

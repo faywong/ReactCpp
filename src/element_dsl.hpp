@@ -428,6 +428,37 @@ private:
     std::vector<Element> children_{};
 };
 
+class CanvasNode final : public ViewLikeNode<CanvasNode, CanvasProps> {
+public:
+    CanvasNode& drawio_xml(std::string v) & {
+        props_.drawio_xml = std::move(v);
+        return *this;
+    }
+    CanvasNode&& drawio_xml(std::string v) && {
+        props_.drawio_xml = std::move(v);
+        return std::move(*this);
+    }
+
+    CanvasNode& diagram_padding(float v) & {
+        props_.diagram_padding = v;
+        return *this;
+    }
+    CanvasNode&& diagram_padding(float v) && {
+        props_.diagram_padding = v;
+        return std::move(*this);
+    }
+
+    Element build() const & {
+        return Canvas(props_);
+    }
+    Element build() && {
+        return Canvas(props_);
+    }
+    operator Element() && {
+        return std::move(*this).build();
+    }
+};
+
 class ViewNode final : public ViewLikeNode<ViewNode, ViewProps> {
 public:
     ViewNode& add(Element child) & {
@@ -487,6 +518,10 @@ inline InputNode input() {
 
 inline InputAreaNode input_area() {
     return InputAreaNode{};
+}
+
+inline CanvasNode canvas() {
+    return CanvasNode{};
 }
 
 }

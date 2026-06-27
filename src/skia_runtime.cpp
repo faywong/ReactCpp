@@ -6,11 +6,13 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <cctype>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include "text_edit.hpp"
@@ -27,6 +29,7 @@
 #include "core/SkPaint.h"
 #include "core/SkPicture.h"
 #include "core/SkPictureRecorder.h"
+#include "core/SkPoint.h"
 #include "core/SkRRect.h"
 #include "core/SkRect.h"
 #include "core/SkRefCnt.h"
@@ -261,6 +264,199 @@ static SkScalar baseline_for_centered_text(const SkFont& font, SkScalar box_heig
     return (box_height - text_height) * 0.5f - metrics.fAscent;
 }
 
+struct DrawioCell {
+    std::string id;
+    std::string value;
+    std::string style;
+    std::string source;
+    std::string target;
+    bool vertex{false};
+    bool edge{false};
+    float x{0.0f};
+    float y{0.0f};
+    float width{0.0f};
+    float height{0.0f};
+    bool has_geometry{false};
+};
+
+struct DrawioDiagram {
+    std::vector<DrawioCell> cells;
+};
+
+static bool starts_with_at(std::string_view s, std::size_t pos, std::string_view needle) {
+    return pos <= s.size() && needle.size() <= s.size() - pos && s.substr(pos, needle.size()) == needle;
+}
+
+static std::string decode_xml_entities(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        if (in[i] != '&') {
+            out.push_back(in[i]);
+            continue;
+        }
+
+        const std::size_t semi = in.find(';', i + 1);
+        if (semi == std::string_view::npos) {
+            out.push_back(in[i]);
+            continue;
+        }
+
+        const std::string_view ent = in.substr(i + 1, semi - i - 1);
+        if (ent == "amp") out.push_back('&');
+        else if (ent == "lt") out.push_back('<');
+        else if (ent == "gt") out.push_back('>');
+        else if (ent == "quot") out.push_back('"');
+        else if (ent == "apos") out.push_back('\'');
+        else {
+            out.append(in.substr(i, semi - i + 1));
+        }
+        i = semi;
+    }
+    return out;
+}
+
+static std::string strip_html_tags(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    bool in_tag = false;
+    for (char c : in) {
+        if (c == '<') {
+            in_tag = true;
+            continue;
+        }
+        if (c == '>') {
+            in_tag = false;
+            continue;
+        }
+        if (!in_tag) out.push_back(c);
+    }
+    return out;
+}
+
+static std::string xml_attr(std::string_view tag, std::string_view name) {
+    std::size_t pos = 0;
+    while ((pos = tag.find(name, pos)) != std::string_view::npos) {
+        const bool boundary_before = pos == 0 || std::isspace(static_cast<unsigned char>(tag[pos - 1])) || tag[pos - 1] == '<';
+        const std::size_t after_name = pos + name.size();
+        if (!boundary_before || after_name >= tag.size() || tag[after_name] != '=') {
+            pos = after_name;
+            continue;
+        }
+
+        const std::size_t quote_pos = after_name + 1;
+        if (quote_pos >= tag.size() || (tag[quote_pos] != '"' && tag[quote_pos] != '\'')) return {};
+        const char quote = tag[quote_pos];
+        const std::size_t value_start = quote_pos + 1;
+        const std::size_t value_end = tag.find(quote, value_start);
+        if (value_end == std::string_view::npos) return {};
+        return decode_xml_entities(tag.substr(value_start, value_end - value_start));
+    }
+    return {};
+}
+
+static float xml_attr_float(std::string_view tag, std::string_view name, float fallback = 0.0f) {
+    const std::string value = xml_attr(tag, name);
+    if (value.empty()) return fallback;
+    char* end = nullptr;
+    const float out = std::strtof(value.c_str(), &end);
+    return end && end != value.c_str() ? out : fallback;
+}
+
+static bool xml_attr_bool(std::string_view tag, std::string_view name) {
+    const std::string value = xml_attr(tag, name);
+    return value == "1" || value == "true";
+}
+
+static std::string drawio_style_value(std::string_view style, std::string_view key) {
+    std::size_t pos = 0;
+    while (pos < style.size()) {
+        const std::size_t end = style.find(';', pos);
+        const std::string_view item = style.substr(pos, end == std::string_view::npos ? style.size() - pos : end - pos);
+        const std::size_t eq = item.find('=');
+        if (eq != std::string_view::npos && item.substr(0, eq) == key) {
+            return std::string(item.substr(eq + 1));
+        }
+        if (end == std::string_view::npos) break;
+        pos = end + 1;
+    }
+    return {};
+}
+
+static bool drawio_style_flag(std::string_view style, std::string_view key) {
+    return drawio_style_value(style, key) == "1";
+}
+
+static SkColor parse_drawio_color(const std::string& value, SkColor fallback) {
+    if (value.empty() || value == "none") return fallback;
+    if (value.size() == 7 && value[0] == '#') {
+        const long raw = std::strtol(value.c_str() + 1, nullptr, 16);
+        return SkColorSetARGB(0xFF, (raw >> 16) & 0xFF, (raw >> 8) & 0xFF, raw & 0xFF);
+    }
+    return fallback;
+}
+
+static std::string extract_drawio_model_xml(std::string_view xml) {
+    if (xml.find("<mxGraphModel") != std::string_view::npos) {
+        return std::string(xml);
+    }
+    if (xml.find("&lt;mxGraphModel") != std::string_view::npos) {
+        return decode_xml_entities(xml);
+    }
+    return std::string(xml);
+}
+
+static DrawioDiagram parse_drawio_diagram(std::string_view xml_input) {
+    const std::string xml = extract_drawio_model_xml(xml_input);
+    DrawioDiagram diagram;
+
+    std::size_t pos = 0;
+    while ((pos = xml.find("<mxCell", pos)) != std::string::npos) {
+        const std::size_t tag_end = xml.find('>', pos);
+        if (tag_end == std::string::npos) break;
+
+        const std::string_view tag(xml.data() + pos, tag_end - pos + 1);
+        const bool self_closing = tag.size() >= 2 && tag[tag.size() - 2] == '/';
+        std::size_t block_end = tag_end + 1;
+        std::string_view block = tag;
+        if (!self_closing) {
+            const std::size_t close = xml.find("</mxCell>", tag_end + 1);
+            if (close == std::string::npos) break;
+            block_end = close + 9;
+            block = std::string_view(xml.data() + pos, block_end - pos);
+        }
+
+        DrawioCell cell;
+        cell.id = xml_attr(tag, "id");
+        cell.value = strip_html_tags(decode_xml_entities(xml_attr(tag, "value")));
+        cell.style = xml_attr(tag, "style");
+        cell.source = xml_attr(tag, "source");
+        cell.target = xml_attr(tag, "target");
+        cell.vertex = xml_attr_bool(tag, "vertex");
+        cell.edge = xml_attr_bool(tag, "edge");
+
+        const std::size_t geom_pos = block.find("<mxGeometry");
+        if (geom_pos != std::string_view::npos) {
+            const std::size_t geom_end = block.find('>', geom_pos);
+            if (geom_end != std::string_view::npos) {
+                const std::string_view geom = block.substr(geom_pos, geom_end - geom_pos + 1);
+                cell.x = xml_attr_float(geom, "x");
+                cell.y = xml_attr_float(geom, "y");
+                cell.width = xml_attr_float(geom, "width");
+                cell.height = xml_attr_float(geom, "height");
+                cell.has_geometry = true;
+            }
+        }
+
+        if ((!cell.id.empty()) && (cell.vertex || cell.edge)) {
+            diagram.cells.push_back(std::move(cell));
+        }
+        pos = block_end;
+    }
+
+    return diagram;
+}
+
 static reactcpp::text::Selection selection_from(const InstanceNode::EditableTextState& s) {
     reactcpp::text::Selection sel;
     sel.active = s.has_selection;
@@ -368,6 +564,166 @@ public:
         paint.setColor(make_color(props.text_r, props.text_g, props.text_b));
         const float text_y = baseline_for_centered_text(font, r.height > 0.0f ? r.height : props.text_size * 1.2f);
         canvas->drawString(props.text.c_str(), 0.0f, text_y, font, paint);
+    }
+};
+
+class CanvasRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<CanvasProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+
+        const SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
+        SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setColor(make_color(props.bg_r, props.bg_g, props.bg_b, props.bg_a));
+        canvas->drawRect(bounds, fill);
+
+        const DrawioDiagram diagram = parse_drawio_diagram(props.drawio_xml);
+        if (diagram.cells.empty()) {
+            draw_empty_message(canvas, ctx, bounds);
+            return;
+        }
+
+        std::unordered_map<std::string, const DrawioCell*> by_id;
+        by_id.reserve(diagram.cells.size());
+
+        bool have_bounds = false;
+        float min_x = 0.0f;
+        float min_y = 0.0f;
+        float max_x = 0.0f;
+        float max_y = 0.0f;
+        for (const DrawioCell& cell : diagram.cells) {
+            by_id[cell.id] = &cell;
+            if (!cell.vertex || !cell.has_geometry) continue;
+            const float x0 = cell.x;
+            const float y0 = cell.y;
+            const float x1 = cell.x + std::max(cell.width, 1.0f);
+            const float y1 = cell.y + std::max(cell.height, 1.0f);
+            if (!have_bounds) {
+                min_x = x0;
+                min_y = y0;
+                max_x = x1;
+                max_y = y1;
+                have_bounds = true;
+            } else {
+                min_x = std::min(min_x, x0);
+                min_y = std::min(min_y, y0);
+                max_x = std::max(max_x, x1);
+                max_y = std::max(max_y, y1);
+            }
+        }
+
+        if (!have_bounds) {
+            draw_empty_message(canvas, ctx, bounds);
+            return;
+        }
+
+        const float pad = std::max(props.diagram_padding, 0.0f);
+        const float diagram_w = std::max(max_x - min_x, 1.0f);
+        const float diagram_h = std::max(max_y - min_y, 1.0f);
+        const float available_w = std::max(r.width - pad * 2.0f, 1.0f);
+        const float available_h = std::max(r.height - pad * 2.0f, 1.0f);
+        const float scale = std::min(available_w / diagram_w, available_h / diagram_h);
+        const float offset_x = pad + (available_w - diagram_w * scale) * 0.5f;
+        const float offset_y = pad + (available_h - diagram_h * scale) * 0.5f;
+
+        auto map_x = [&](float x) {
+            return offset_x + (x - min_x) * scale;
+        };
+        auto map_y = [&](float y) {
+            return offset_y + (y - min_y) * scale;
+        };
+        auto center_of = [&](const DrawioCell& cell) {
+            return SkPoint::Make(map_x(cell.x + cell.width * 0.5f), map_y(cell.y + cell.height * 0.5f));
+        };
+
+        canvas->save();
+        canvas->clipRect(bounds, true);
+
+        for (const DrawioCell& cell : diagram.cells) {
+            if (!cell.edge) continue;
+            const auto source_it = by_id.find(cell.source);
+            const auto target_it = by_id.find(cell.target);
+            if (source_it == by_id.end() || target_it == by_id.end()) continue;
+            const DrawioCell* source = source_it->second;
+            const DrawioCell* target = target_it->second;
+            if (!source->vertex || !target->vertex) continue;
+
+            SkPaint stroke;
+            stroke.setAntiAlias(true);
+            stroke.setStyle(SkPaint::kStroke_Style);
+            stroke.setStrokeWidth(std::max(1.2f, scale * 1.4f));
+            stroke.setColor(parse_drawio_color(drawio_style_value(cell.style, "strokeColor"), static_cast<SkColor>(0xFF6B7280)));
+
+            const SkPoint a = center_of(*source);
+            const SkPoint b = center_of(*target);
+            canvas->drawLine(a, b, stroke);
+        }
+
+        for (const DrawioCell& cell : diagram.cells) {
+            if (!cell.vertex || !cell.has_geometry) continue;
+            draw_vertex(cell, canvas, ctx, map_x(cell.x), map_y(cell.y), std::max(cell.width * scale, 1.0f), std::max(cell.height * scale, 1.0f));
+        }
+
+        canvas->restore();
+    }
+
+private:
+    static void draw_empty_message(SkCanvas* canvas, const DrawContext& ctx, SkRect bounds) {
+        SkFont font;
+        font.setSize(14.0f);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
+        SkPaint paint;
+        paint.setAntiAlias(true);
+        paint.setColor(static_cast<SkColor>(0xFF6B7280));
+        canvas->drawString("No draw.io diagram", bounds.left() + 12.0f, bounds.top() + 24.0f, font, paint);
+    }
+
+    static void draw_vertex(const DrawioCell& cell, SkCanvas* canvas, const DrawContext& ctx, float x, float y, float w, float h) {
+        const SkRect rect = SkRect::MakeXYWH(x, y, w, h);
+        const bool ellipse = drawio_style_value(cell.style, "shape") == "ellipse";
+        const bool rounded = drawio_style_flag(cell.style, "rounded");
+
+        SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setStyle(SkPaint::kFill_Style);
+        fill.setColor(parse_drawio_color(drawio_style_value(cell.style, "fillColor"), SK_ColorWHITE));
+
+        SkPaint stroke;
+        stroke.setAntiAlias(true);
+        stroke.setStyle(SkPaint::kStroke_Style);
+        stroke.setStrokeWidth(1.4f);
+        stroke.setColor(parse_drawio_color(drawio_style_value(cell.style, "strokeColor"), static_cast<SkColor>(0xFF374151)));
+
+        if (ellipse) {
+            canvas->drawOval(rect, fill);
+            canvas->drawOval(rect, stroke);
+        } else if (rounded) {
+            const float radius = std::min(w, h) * 0.12f;
+            canvas->drawRoundRect(rect, radius, radius, fill);
+            canvas->drawRoundRect(rect, radius, radius, stroke);
+        } else {
+            canvas->drawRect(rect, fill);
+            canvas->drawRect(rect, stroke);
+        }
+
+        if (cell.value.empty()) return;
+
+        SkFont font;
+        font.setSize(std::clamp(h * 0.20f, 10.0f, 16.0f));
+        font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkFontMetrics metrics;
+        font.getMetrics(&metrics);
+        SkPaint text_paint;
+        text_paint.setAntiAlias(true);
+        text_paint.setColor(parse_drawio_color(drawio_style_value(cell.style, "fontColor"), static_cast<SkColor>(0xFF111827)));
+
+        const float text_w = font.measureText(cell.value.c_str(), cell.value.size(), SkTextEncoding::kUTF8);
+        const float text_x = x + (w - text_w) * 0.5f;
+        const float text_y = y + (h - (metrics.fDescent - metrics.fAscent)) * 0.5f - metrics.fAscent;
+        canvas->drawString(cell.value.c_str(), text_x, text_y, font, text_paint);
     }
 };
 
@@ -672,12 +1028,14 @@ static const ElementRenderer& renderer_for(TypeId type) {
     static TextRenderer text_renderer;
     static InputRenderer input_renderer;
     static InputAreaRenderer input_area_renderer;
+    static CanvasRenderer canvas_renderer;
 
     if (type == host_type_view()) return view_renderer;
     if (type == host_type_button()) return button_renderer;
     if (type == host_type_text()) return text_renderer;
     if (type == host_type_input()) return input_renderer;
     if (type == host_type_input_area()) return input_area_renderer;
+    if (type == host_type_canvas()) return canvas_renderer;
     return view_renderer;
 }
 
@@ -2292,6 +2650,11 @@ TypeId host_type_input_area() {
     return &dummy;
 }
 
+TypeId host_type_canvas() {
+    static int dummy;
+    return &dummy;
+}
+
 Element View(const ViewProps& props, std::vector<Element> children) {
     Element e;
     e.type = host_type_view();
@@ -2326,6 +2689,13 @@ Element InputArea(const InputAreaProps& props, std::vector<Element> children) {
     e.type = host_type_input_area();
     e.props = props;
     e.children = std::move(children);
+    return e;
+}
+
+Element Canvas(const CanvasProps& props) {
+    Element e;
+    e.type = host_type_canvas();
+    e.props = props;
     return e;
 }
 

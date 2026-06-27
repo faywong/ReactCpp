@@ -59,6 +59,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 | Current demo entry                      | `src/main.cpp`    | Creates a simple element tree and calls `run_skia_app()`. |
 | Declarative UI authoring DSL helpers    | `src/element_dsl.hpp` | Fluent builder DSL under `reactcpp::ui` to make element trees structure-first. |
 | SDL3 + Skia + Yoga runtime              | `src/skia_runtime.*` | SDL3 event loop + Skia rendering + Yoga flexbox layout. |
+| Draw.io canvas component                | `src/skia_runtime.*`, `src/element_dsl.hpp` | `CanvasProps`/`canvas()` render a basic draw.io `mxGraphModel` subset through Skia. |
 | Legacy console reconciler               | `src/runtime.*`   | Older PoC kept for reference; not used by the SDL/Skia demo. |
 | Skia SDK setup                          | `scripts/skia/setup_skia_sdk.py` | Installs latest CI artifact via `gh` or builds locally. |
 | Skia SDK build internals                | `scripts/skia/build_skia_sdk.py` | Builds/packages ReactCpp's Skia profile into `.reactcpp/skia-sdk/<platform>-<arch>`. |
@@ -183,6 +184,18 @@ Legacy fallback remains supported: clone/build `../skia-builder` manually and pa
 - Runtime text rendering now asks fontconfig for a scalable system font that supports common Chinese codepoints (`中`, `文`, `国`), preferring common CJK families such as Noto Sans CJK / Source Han Sans / WenQuanYi when present.
 - The matched font file and TTC index are loaded into Skia via `SkFontMgr::makeFromFile()` and reused as the default runtime typeface, so `Text`, `Button`, `Input`, and `InputArea` draw Chinese text with an actual CJK system font instead of the default Latin font's missing-glyph boxes.
 - If fontconfig matching fails, the runtime falls back to Skia's `matchFamilyStyleCharacter()` for character-level system fallback before trying Latin default families.
+
+### Canvas component for draw.io diagrams
+
+- Public UI surface:
+  - `CanvasProps` is a `ViewProps`-derived host prop type with `drawio_xml` and `diagram_padding`.
+  - `reactcpp::ui::canvas()` is the DSL builder entry point.
+- The first renderer iteration supports uncompressed/raw draw.io `mxGraphModel` XML:
+  - Parses common `mxCell` vertices and edges.
+  - Renders rectangles, rounded rectangles, ellipses, labels, and source/target connector lines through Skia.
+  - Fits the diagram bounds into the Yoga-assigned canvas box while preserving aspect ratio.
+- This intentionally does not yet inflate compressed draw.io `<diagram>` payloads; callers should pass raw/uncompressed `mxGraphModel` XML for now.
+- `src/main.cpp` includes a small architecture module diagram demo rendered with `canvas()`.
 
 ### Reactive updates + frame-boundary batching (SkiaRuntime)
 

@@ -141,7 +141,14 @@ struct InputAreaProps : ViewProps {
     bool operator==(const InputAreaProps&) const = default;
 };
 
-using ElementProps = std::variant<ViewProps, ButtonProps, TextProps, InputProps, InputAreaProps>;
+struct CanvasProps : ViewProps {
+    std::string drawio_xml;
+    float diagram_padding{16.0f};
+
+    bool operator==(const CanvasProps&) const = default;
+};
+
+using ElementProps = std::variant<ViewProps, ButtonProps, TextProps, InputProps, InputAreaProps, CanvasProps>;
 
 struct Element {
     TypeId type{};
@@ -159,12 +166,14 @@ TypeId host_type_button();
 TypeId host_type_text();
 TypeId host_type_input();
 TypeId host_type_input_area();
+TypeId host_type_canvas();
 
 Element View(const ViewProps& props, std::vector<Element> children = {});
 Element Button(const ButtonProps& props);
 Element Text(const TextProps& props);
 Element Input(const InputProps& props);
 Element InputArea(const InputAreaProps& props, std::vector<Element> children = {});
+Element Canvas(const CanvasProps& props);
 
 enum class HookKind : std::uint8_t {
     State
