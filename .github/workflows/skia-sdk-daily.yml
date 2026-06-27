@@ -1,6 +1,12 @@
 name: Skia SDK Daily
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/skia-sdk-daily.yml"
+      - "scripts/skia/**"
   workflow_dispatch:
   schedule:
     - cron: "22 19 * * *"
