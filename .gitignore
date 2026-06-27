@@ -13,3 +13,5 @@ build_verify*/
 .cache
 .idea
 build-check/
+.reactcpp/
+__pycache__/

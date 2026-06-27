@@ -11,13 +11,44 @@ enable_testing()
 
 include(FetchContent)
 
-option(REACTCPP_BUILD_DEMO "Build SDL+Skia demo (requires external skia-builder)" ON)
+option(REACTCPP_BUILD_DEMO "Build SDL+Skia demo" ON)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(REACTCPP_HOST_PLATFORM "macos")
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(REACTCPP_HOST_PLATFORM "windows")
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(REACTCPP_HOST_PLATFORM "linux")
+else()
+    string(TOLOWER "${CMAKE_SYSTEM_NAME}" REACTCPP_HOST_PLATFORM)
+endif()
+
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" REACTCPP_HOST_ARCH_RAW)
+if (REACTCPP_HOST_ARCH_RAW MATCHES "^(x86_64|amd64)$")
+    set(REACTCPP_HOST_ARCH "x64")
+elseif (REACTCPP_HOST_ARCH_RAW MATCHES "^(aarch64|arm64)$")
+    set(REACTCPP_HOST_ARCH "arm64")
+elseif (REACTCPP_HOST_ARCH_RAW MATCHES "^(i386|i686|x86)$")
+    set(REACTCPP_HOST_ARCH "x86")
+else()
+    set(REACTCPP_HOST_ARCH "${REACTCPP_HOST_ARCH_RAW}")
+endif()
+
+set(REACTCPP_SKIA_SDK_ROOT_DEFAULT
+    "${CMAKE_CURRENT_SOURCE_DIR}/.reactcpp/skia-sdk/${REACTCPP_HOST_PLATFORM}-${REACTCPP_HOST_ARCH}"
+)
+set(REACTCPP_SKIA_SDK_ROOT "${REACTCPP_SKIA_SDK_ROOT_DEFAULT}" CACHE PATH "Path to ReactCpp Skia SDK")
 
 set(SKIA_BUILDER_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder")
-set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Path to skia-builder directory")
+set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Fallback path to skia-builder directory")
 
-if (REACTCPP_BUILD_DEMO AND NOT EXISTS "${SKIA_BUILDER_ROOT}")
-    message(WARNING "skia-builder not found at ${SKIA_BUILDER_ROOT}; demo target will be skipped")
+if (REACTCPP_BUILD_DEMO
+        AND NOT EXISTS "${REACTCPP_SKIA_SDK_ROOT}/skia/include/core/SkCanvas.h"
+        AND NOT EXISTS "${SKIA_BUILDER_ROOT}")
+    message(WARNING
+        "No ReactCpp Skia SDK found at ${REACTCPP_SKIA_SDK_ROOT}, and fallback skia-builder was not found at ${SKIA_BUILDER_ROOT}. "
+        "Run: python3 scripts/skia/setup_skia_sdk.py"
+    )
     set(REACTCPP_BUILD_DEMO OFF)
 endif()
 
@@ -258,10 +289,24 @@ else()
     )
 endif()
 
-    # Skia: headers + static libraries
-    set(SKIA_ROOT "${SKIA_BUILDER_ROOT}/skia")
-    set(SKIA_LIB_DIR "${SKIA_BUILDER_ROOT}/build")
-    set(SKIA_LIB_PATH "${SKIA_LIB_DIR}/libskia.a" CACHE FILEPATH "Path to Skia static library (libskia.a)")
+    # Skia: prefer the ReactCpp SDK produced by scripts/skia/build_skia_sdk.py.
+    if (EXISTS "${REACTCPP_SKIA_SDK_ROOT}/skia/include/core/SkCanvas.h")
+        set(SKIA_ROOT "${REACTCPP_SKIA_SDK_ROOT}/skia")
+        set(SKIA_LIB_DIR "${REACTCPP_SKIA_SDK_ROOT}/lib")
+        message(STATUS "Using ReactCpp Skia SDK: ${REACTCPP_SKIA_SDK_ROOT}")
+    else()
+        set(SKIA_ROOT "${SKIA_BUILDER_ROOT}/skia")
+        set(SKIA_LIB_DIR "${SKIA_BUILDER_ROOT}/build")
+        message(STATUS "Using fallback skia-builder checkout: ${SKIA_BUILDER_ROOT}")
+    endif()
+
+    if (WIN32)
+        set(SKIA_LIB_PATH_DEFAULT "${SKIA_LIB_DIR}/skia.lib")
+    else()
+        set(SKIA_LIB_PATH_DEFAULT "${SKIA_LIB_DIR}/libskia.a")
+    endif()
+
+    set(SKIA_LIB_PATH "${SKIA_LIB_PATH_DEFAULT}" CACHE FILEPATH "Path to Skia library")
     set(SKIA_SKCMS_LIB_PATH "${SKIA_LIB_DIR}/libskcms.a" CACHE FILEPATH "Path to skcms static library (libskcms.a), if present")
 
 if (NOT EXISTS "${SKIA_LIB_PATH}")
