@@ -137,9 +137,11 @@ latest SDK artifact produced by GitHub Actions instead of building Skia locally.
    - `reactcpp-skia-sdk-linux-x64`
    - `reactcpp-skia-sdk-macos-arm64`
    - `reactcpp-skia-sdk-windows-x64`
-3. Unzip the downloaded GitHub artifact. It contains an SDK archive such as
+3. Unzip the downloaded GitHub artifact once. GitHub wraps artifacts in an
+   outer zip; inside it you will find the SDK zip, such as
    `reactcpp-skia-sdk-linux-x64.zip`.
-4. Install that SDK archive:
+4. Install the inner SDK zip with `--archive`. The setup script extracts this
+   archive into `.reactcpp/skia-sdk/`:
 
    ```bash
    python3 scripts/skia/setup_skia_sdk.py --archive /path/to/reactcpp-skia-sdk-linux-x64.zip
