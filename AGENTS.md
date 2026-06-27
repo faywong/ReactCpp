@@ -172,9 +172,17 @@ Legacy fallback remains supported: clone/build `../skia-builder` manually and pa
 - `scripts/skia/build_skia_sdk.py` builds a ReactCpp-specific Skia SDK profile:
   - Ganesh GL enabled.
   - Linux text dependencies enabled: freetype, fontconfig, harfbuzz.
+  - Skia public-header dependencies outside `include/` are packaged when required; today this includes `modules/skcms/skcms.h` and `modules/skcms/src/*.h`.
   - Output layout: `.reactcpp/skia-sdk/<platform>-<arch>/{lib,skia/include,reactcpp-skia-sdk.json}`.
 - `CMakeLists.txt` now searches `REACTCPP_SKIA_SDK_ROOT` first and falls back to legacy `SKIA_BUILDER_ROOT`.
 - `.github/workflows/skia-sdk-daily.yml` builds daily/manual SDK artifacts for Linux x64, macOS arm64, and Windows x64.
+
+### Font selection for CJK text
+
+- `SkiaRuntime` creates its Skia font manager through the fontconfig-backed Skia port on Linux.
+- Runtime text rendering now asks fontconfig for a scalable system font that supports common Chinese codepoints (`中`, `文`, `国`), preferring common CJK families such as Noto Sans CJK / Source Han Sans / WenQuanYi when present.
+- The matched font file and TTC index are loaded into Skia via `SkFontMgr::makeFromFile()` and reused as the default runtime typeface, so `Text`, `Button`, `Input`, and `InputArea` draw Chinese text with an actual CJK system font instead of the default Latin font's missing-glyph boxes.
+- If fontconfig matching fails, the runtime falls back to Skia's `matchFamilyStyleCharacter()` for character-level system fallback before trying Latin default families.
 
 ### Reactive updates + frame-boundary batching (SkiaRuntime)
 

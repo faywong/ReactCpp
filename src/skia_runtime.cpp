@@ -47,6 +47,8 @@
 #include "ports/SkFontMgr_fontconfig.h"
 #include "ports/SkFontScanner_FreeType.h"
 
+#include <fontconfig/fontconfig.h>
+
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -137,8 +139,84 @@ struct DrawContext {
 
 thread_local sk_sp<SkFontMgr> g_font_mgr;
 
+struct FontconfigFontMatch {
+    std::string file;
+    int ttc_index{0};
+};
+
+static std::optional<FontconfigFontMatch> match_cjk_font_with_fontconfig() {
+    FcConfig* config = FcInitLoadConfigAndFonts();
+    if (!config) return std::nullopt;
+
+    FcPattern* pattern = FcPatternCreate();
+    if (!pattern) {
+        FcConfigDestroy(config);
+        return std::nullopt;
+    }
+
+    FcCharSet* charset = FcCharSetCreate();
+    if (!charset) {
+        FcPatternDestroy(pattern);
+        FcConfigDestroy(config);
+        return std::nullopt;
+    }
+
+    FcCharSetAddChar(charset, 0x4E2D); // 中
+    FcCharSetAddChar(charset, 0x6587); // 文
+    FcCharSetAddChar(charset, 0x56FD); // 国
+    FcPatternAddCharSet(pattern, FC_CHARSET, charset);
+    FcCharSetDestroy(charset);
+
+    FcPatternAddBool(pattern, FC_SCALABLE, FcTrue);
+    FcPatternAddString(pattern, FC_LANG, reinterpret_cast<const FcChar8*>("zh-cn"));
+    FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>("Noto Sans CJK SC"));
+    FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>("Noto Sans CJK"));
+    FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>("Source Han Sans SC"));
+    FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>("WenQuanYi Micro Hei"));
+
+    FcConfigSubstitute(config, pattern, FcMatchPattern);
+    FcDefaultSubstitute(pattern);
+
+    FcResult result = FcResultNoMatch;
+    FcPattern* match = FcFontMatch(config, pattern, &result);
+    FcPatternDestroy(pattern);
+
+    std::optional<FontconfigFontMatch> out;
+    if (match && result == FcResultMatch) {
+        FcChar8* file = nullptr;
+        int index = 0;
+        if (FcPatternGetString(match, FC_FILE, 0, &file) == FcResultMatch && file) {
+            (void)FcPatternGetInteger(match, FC_INDEX, 0, &index);
+            out = FontconfigFontMatch{reinterpret_cast<const char*>(file), index};
+        }
+    }
+
+    if (match) FcPatternDestroy(match);
+    FcConfigDestroy(config);
+    return out;
+}
+
 static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>& mgr) {
     if (!mgr) return nullptr;
+    thread_local sk_sp<SkTypeface> cjk_typeface;
+    if (!cjk_typeface) {
+        static const std::optional<FontconfigFontMatch> cjk_match = match_cjk_font_with_fontconfig();
+        if (cjk_match) {
+            cjk_typeface = mgr->makeFromFile(cjk_match->file.c_str(), cjk_match->ttc_index);
+        }
+        if (!cjk_typeface) {
+            const char* zh[] = {"zh", "zh-CN", "zh-Hans"};
+            cjk_typeface = mgr->matchFamilyStyleCharacter(
+                nullptr,
+                SkFontStyle::Normal(),
+                zh,
+                static_cast<int>(sizeof(zh) / sizeof(zh[0])),
+                0x4E2D
+            );
+        }
+    }
+    if (cjk_typeface) return cjk_typeface;
+
     sk_sp<SkTypeface> tf = mgr->matchFamilyStyle(nullptr, SkFontStyle::Normal());
     if (tf) return tf;
     tf = mgr->matchFamilyStyle("Noto Sans", SkFontStyle::Normal());

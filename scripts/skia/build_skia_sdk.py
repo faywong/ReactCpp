@@ -127,6 +127,25 @@ def copy_tree(src: Path, dst: Path):
     shutil.copytree(src, dst)
 
 
+def copy_skcms_public_headers(skia_src: Path, sdk_dir: Path):
+    src_root = skia_src / "modules" / "skcms"
+    dst_root = sdk_dir / "skia" / "modules" / "skcms"
+    if not src_root.exists():
+        return
+
+    header = src_root / "skcms.h"
+    if header.exists():
+        dst_root.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(header, dst_root / "skcms.h")
+
+    src_headers = src_root / "src"
+    if src_headers.exists():
+        for path in sorted(src_headers.rglob("*.h")):
+            dst = dst_root / "src" / path.relative_to(src_headers)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dst)
+
+
 def package_sdk(sdk_dir: Path, archive: Path):
     archive.parent.mkdir(parents=True, exist_ok=True)
     if archive.exists():
@@ -195,6 +214,7 @@ def main() -> int:
     (sdk_dir / "skia").mkdir(parents=True)
 
     copy_tree(skia_src / "include", sdk_dir / "skia" / "include")
+    copy_skcms_public_headers(skia_src, sdk_dir)
 
     for name in ("libskia.a", "libskcms.a", "skia.lib", "skia.dll", "skia.dll.lib"):
         src = build_dir / name
