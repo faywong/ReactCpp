@@ -13,7 +13,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BUILDER_URL = "https://github.com/fonttools/skia-builder.git"
-DEFAULT_BUILDER_REF = "main"
+DEFAULT_BUILDER_REF = "auto"
 
 
 def host_platform() -> str:
@@ -43,6 +43,20 @@ def run(cmd, *, cwd=None, env=None):
     subprocess.check_call([str(c) for c in cmd], cwd=cwd, env=env)
 
 
+def resolve_builder_ref(builder_root: Path, ref: str) -> str:
+    if ref != "auto":
+        return ref
+
+    output = subprocess.check_output(
+        ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        cwd=builder_root,
+        text=True,
+    ).strip()
+    if output.startswith("origin/"):
+        return output.removeprefix("origin/")
+    return output
+
+
 def ensure_builder(builder_root: Path, url: str, ref: str, skip_update: bool):
     if not builder_root.exists():
         builder_root.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +64,8 @@ def ensure_builder(builder_root: Path, url: str, ref: str, skip_update: bool):
 
     if not skip_update:
         run(["git", "fetch", "--tags", "origin"], cwd=builder_root)
-        run(["git", "checkout", ref], cwd=builder_root)
+        resolved_ref = resolve_builder_ref(builder_root, ref)
+        run(["git", "checkout", resolved_ref], cwd=builder_root)
         run(["git", "submodule", "update", "--init", "--recursive"], cwd=builder_root)
 
 
