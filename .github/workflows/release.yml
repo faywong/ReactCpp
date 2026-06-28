@@ -70,6 +70,7 @@ jobs:
             git \
             libsdl2-dev \
             ${SDL3_DEV_PKGS} \
+            libxtst-dev \
             libfontconfig1-dev \
             libfreetype-dev \
             libgl1-mesa-dev \
@@ -84,6 +85,7 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release \
               -DSDL_TEST=OFF \
               -DSDL_TEST_LIBRARY=OFF \
+              -DSDL_X11_XTEST=OFF \
               -DSDL_INSTALL_TESTS=OFF
             cmake --build /tmp/sdl3-build --parallel
             sudo cmake --install /tmp/sdl3-build
