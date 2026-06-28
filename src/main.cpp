@@ -12,44 +12,81 @@ std::string ArchitectureDrawioXml() {
   <root>
     <mxCell id="0"/>
     <mxCell id="1" parent="0"/>
-    <mxCell id="app" value="App Render" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;fontColor=#111827;" vertex="1" parent="1">
-      <mxGeometry x="40" y="70" width="130" height="60" as="geometry"/>
+    <mxCell id="title" value="ReactCpp draw.io renderer showcase&lt;br&gt;raw mxGraphModel -> Skia" style="swimlane;rounded=1;whiteSpace=wrap;html=1;startSize=34;fontSize=15;fillColor=#F8FAFC;strokeColor=#64748B;fontColor=#0F172A;" vertex="1" parent="1">
+      <mxGeometry x="20" y="20" width="900" height="340" as="geometry"/>
     </mxCell>
-    <mxCell id="reconcile" value="Reconciler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#111827;" vertex="1" parent="1">
-      <mxGeometry x="230" y="70" width="130" height="60" as="geometry"/>
+    <mxCell id="input" value="SDL Events&lt;br&gt;mouse / IME / wheel" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="60" y="82" width="132" height="64" as="geometry"/>
     </mxCell>
-    <mxCell id="layout" value="Yoga Layout" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontColor=#111827;" vertex="1" parent="1">
-      <mxGeometry x="420" y="70" width="130" height="60" as="geometry"/>
+    <mxCell id="render" value="App Render&lt;br&gt;components + hooks" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#E0F2FE;strokeColor=#0284C7;strokeWidth=2;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="244" y="82" width="140" height="64" as="geometry"/>
     </mxCell>
-    <mxCell id="skia" value="Skia Cache" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE7F3;strokeColor=#DB2777;fontColor=#111827;" vertex="1" parent="1">
-      <mxGeometry x="610" y="70" width="130" height="60" as="geometry"/>
+    <mxCell id="reconcile" value="Reconciler&lt;br&gt;diff + dirty flags" style="shape=rhombus;whiteSpace=wrap;html=1;fontSize=13;fillColor=#DCFCE7;strokeColor=#16A34A;strokeWidth=2;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="452" y="68" width="116" height="92" as="geometry"/>
     </mxCell>
-    <mxCell id="present" value="SDL Window" style="ellipse;whiteSpace=wrap;html=1;fillColor=#E0E7FF;strokeColor=#4F46E5;fontColor=#111827;" vertex="1" parent="1">
-      <mxGeometry x="790" y="70" width="120" height="60" as="geometry"/>
+    <mxCell id="layout" value="Yoga Layout&lt;br&gt;intrinsic text sizing" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="632" y="82" width="152" height="64" as="geometry"/>
     </mxCell>
-    <mxCell id="state" value="State Hooks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3F4F6;strokeColor=#6B7280;fontColor=#111827;" vertex="1" parent="1">
-      <mxGeometry x="230" y="170" width="130" height="52" as="geometry"/>
+    <mxCell id="present" value="SDL Window" style="ellipse;whiteSpace=wrap;html=1;fontSize=13;fillColor=#E0E7FF;strokeColor=#4F46E5;strokeWidth=2;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="812" y="84" width="84" height="60" as="geometry"/>
     </mxCell>
-    <mxCell id="events" value="SDL Events" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3F4F6;strokeColor=#6B7280;fontColor=#111827;" vertex="1" parent="1">
-      <mxGeometry x="40" y="170" width="130" height="52" as="geometry"/>
+    <mxCell id="state" value="Hook state store&lt;br&gt;batched updates" style="shape=cylinder;whiteSpace=wrap;html=1;fontSize=13;fillColor=#F3E8FF;strokeColor=#9333EA;strokeWidth=2;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="238" y="220" width="142" height="72" as="geometry"/>
     </mxCell>
-    <mxCell id="e1" style="endArrow=block;html=1;rounded=0;strokeColor=#6B7280;" edge="1" parent="1" source="app" target="reconcile">
+    <mxCell id="picture" value="SkPicture cache&lt;br&gt;retained frame graph" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#FCE7F3;strokeColor=#DB2777;strokeWidth=2;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="634" y="220" width="148" height="64" as="geometry"/>
+    </mxCell>
+    <mxCell id="clipboard" value="Context menu&lt;br&gt;Copy to clipboard" style="shape=image;whiteSpace=wrap;html=1;fontSize=13;fillColor=#F1F5F9;strokeColor=#475569;dashed=1;fontColor=#111827;" vertex="1" parent="1">
+      <mxGeometry x="60" y="224" width="132" height="60" as="geometry"/>
+    </mxCell>
+    <mxCell id="e1" style="endArrow=block;html=1;rounded=0;strokeColor=#475569;strokeWidth=2;" edge="1" parent="1" source="input" target="render">
       <mxGeometry relative="1" as="geometry"/>
     </mxCell>
-    <mxCell id="e2" style="endArrow=block;html=1;rounded=0;strokeColor=#6B7280;" edge="1" parent="1" source="reconcile" target="layout">
+    <mxCell id="e2" style="endArrow=block;html=1;rounded=0;strokeColor=#475569;strokeWidth=2;" edge="1" parent="1" source="render" target="reconcile">
       <mxGeometry relative="1" as="geometry"/>
     </mxCell>
-    <mxCell id="e3" style="endArrow=block;html=1;rounded=0;strokeColor=#6B7280;" edge="1" parent="1" source="layout" target="skia">
+    <mxCell id="e3" style="endArrow=block;html=1;rounded=0;strokeColor=#475569;strokeWidth=2;" edge="1" parent="1" source="reconcile" target="layout">
       <mxGeometry relative="1" as="geometry"/>
     </mxCell>
-    <mxCell id="e4" style="endArrow=block;html=1;rounded=0;strokeColor=#6B7280;" edge="1" parent="1" source="skia" target="present">
+    <mxCell id="e4" style="endArrow=block;html=1;rounded=0;strokeColor=#475569;strokeWidth=2;" edge="1" parent="1" source="layout" target="present">
       <mxGeometry relative="1" as="geometry"/>
     </mxCell>
-    <mxCell id="e5" style="endArrow=block;html=1;rounded=0;strokeColor=#6B7280;" edge="1" parent="1" source="events" target="state">
+    <mxCell id="e5" value="setState()" style="endArrow=block;html=1;rounded=0;strokeColor=#9333EA;strokeWidth=2;dashed=1;fontColor=#6B21A8;fontSize=12;" edge="1" parent="1" source="input" target="state">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="126" y="190" as="sourcePoint"/>
+        <mxPoint x="310" y="190" as="targetPoint"/>
+        <Array as="points">
+          <mxPoint x="126" y="190"/>
+          <mxPoint x="310" y="190"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e6" value="next frame" style="endArrow=block;html=1;rounded=0;strokeColor=#9333EA;strokeWidth=2;dashed=1;fontColor=#6B21A8;fontSize=12;" edge="1" parent="1" source="state" target="reconcile">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="520" y="256"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e7" value="record dirty nodes" style="endArrow=block;html=1;rounded=0;strokeColor=#DB2777;strokeWidth=2;fontColor=#9D174D;fontSize=12;" edge="1" parent="1" source="layout" target="picture">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="708" y="184"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e8" value="draw cached pictures" style="endArrow=block;html=1;rounded=0;strokeColor=#DB2777;strokeWidth=2;fontColor=#9D174D;fontSize=12;" edge="1" parent="1" source="picture" target="present">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="854" y="252"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e9" value="right click" style="endArrow=block;html=1;rounded=0;strokeColor=#475569;strokeWidth=2;dashed=1;fontColor=#334155;fontSize=12;" edge="1" parent="1" source="input" target="clipboard">
       <mxGeometry relative="1" as="geometry"/>
     </mxCell>
-    <mxCell id="e6" style="endArrow=block;html=1;rounded=0;strokeColor=#6B7280;" edge="1" parent="1" source="state" target="reconcile">
-      <mxGeometry relative="1" as="geometry"/>
+    <mxCell id="legend" value="Rendered features: swimlane, rounded rectangles, ellipse, rhombus, cylinder, image placeholder, wrapped labels, dashed strokes, waypoint polylines, arrowheads" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;align=left;fillColor=#FFFFFF;strokeColor=#CBD5E1;fontColor=#334155;" vertex="1" parent="1">
+      <mxGeometry x="60" y="310" width="800" height="34" as="geometry"/>
     </mxCell>
   </root>
 </mxGraphModel>
@@ -127,7 +164,7 @@ Element AppRoot() {
 
         canvas()
             .margin(6.0f)
-            .size(720.0f, 230.0f)
+            .size(820.0f, 330.0f)
             .bg(1.0f, 1.0f, 1.0f)
             .diagram_padding(18.0f)
             .drawio_xml(ArchitectureDrawioXml())

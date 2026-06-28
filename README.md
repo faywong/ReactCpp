@@ -1,6 +1,6 @@
 # ReactCpp
 
-This is a small experimental C++20 reactive UI runtime PoC.
+ReactCpp is a React-inspired C++20 cross-platform declarative GUI framework in alpha. It borrows the core ideas behind [React's component model](https://react.dev/learn/thinking-in-react) and brings them to a native Skia/SDL runtime.
 
 ![ReactCpp demo showing text input, multiline editing, and a draw.io canvas architecture diagram](docs/images/reactcpp-demo.png)
 
@@ -14,6 +14,7 @@ This is a small experimental C++20 reactive UI runtime PoC.
 - **SkPicture caching**: each instance records its own cached `SkPicture`; dirty nodes re-record while unchanged nodes reuse cached drawing.
 - **Threaded Ganesh path**: the GL mode records UI frames on a worker thread and presents on the SDL main thread through a frame mailbox.
 - **SDL3 input**: mouse hit testing, click bubbling, focus, IME text input, caret placement, selection, clipboard, undo, and multiline editing are handled in the runtime.
+- **Context menu copy**: right-click a focused/selected element and use Copy to place its text-like content on the system clipboard.
 - **System font selection**: Linux text rendering uses fontconfig-backed Skia font management and chooses a system CJK font for Chinese text.
 - **Draw.io canvas**: `Canvas` renders a raw/uncompressed draw.io `mxGraphModel` subset directly with Skia.
 
@@ -102,7 +103,7 @@ input_area()
 
 ### Canvas
 
-`canvas()` renders a draw.io diagram from raw/uncompressed `mxGraphModel` XML. The first implementation supports common `mxCell` vertices and edges, including rectangles, rounded rectangles, ellipses, labels, and source/target connector lines.
+`canvas()` renders a draw.io diagram from raw/uncompressed `mxGraphModel` XML. It supports common `mxCell` vertices and edges, including rectangles, rounded rectangles, ellipses, diamonds, cylinders, swimlanes, image placeholders, wrapped labels, dashed strokes, edge waypoints, and source/target connector arrows.
 
 ```cpp
 canvas()
@@ -126,53 +127,51 @@ Compressed draw.io `<diagram>` payloads are not inflated yet; pass raw `mxGraphM
 
 ## Prerequisites
 
-### 1) Prepare the ReactCpp Skia SDK
+ReactCpp needs a Skia SDK and SDL development headers/libs.
 
-Skia is still the rendering backend. The quickest setup path is to download the
-latest SDK artifact produced by GitHub Actions instead of building Skia locally.
+### Skia SDK
 
-1. Open the latest successful
-   [Skia SDK Daily workflow run](https://github.com/faywong/ReactCpp/actions/workflows/skia-sdk-daily.yml?query=branch%3Amain+is%3Asuccess).
-2. Download the artifact for your platform:
-   - `reactcpp-skia-sdk-linux-x64`
-   - `reactcpp-skia-sdk-macos-arm64`
-   - `reactcpp-skia-sdk-windows-x64`
-3. Unzip the downloaded GitHub artifact once. GitHub wraps artifacts in an
-   outer zip; inside it you will find the SDK zip, such as
-   `reactcpp-skia-sdk-linux-x64.zip`.
-4. Install the inner SDK zip with `--archive`. The setup script extracts this
-   archive into `.reactcpp/skia-sdk/`:
+Choose one setup path:
 
-   ```bash
-   python3 scripts/skia/setup_skia_sdk.py --archive /path/to/reactcpp-skia-sdk-linux-x64.zip
-   ```
+- **Build Skia from source**:
 
-If you need to build the SDK locally, run the setup wrapper without `--archive`.
-That clones/updates `skia-builder`, builds the ReactCpp-specific Skia profile,
-and installs the SDK under `.reactcpp/skia-sdk/`.
+  ```bash
+  python3 scripts/skia/setup_skia_sdk.py
+  ```
 
-```bash
-python3 scripts/skia/setup_skia_sdk.py
-```
+  This uses `scripts/skia/build_skia_sdk.py` and the upstream
+  [fonttools/skia-builder](https://github.com/fonttools/skia-builder) project
+  to build a Skia SDK from source, then installs it under
+  `.reactcpp/skia-sdk/<platform>-<arch>/`.
+
+- **Install a prebuilt Skia SDK archive**:
+
+  Download the platform artifact from the latest successful
+  [Skia SDK Daily workflow run](https://github.com/faywong/ReactCpp/actions/workflows/skia-sdk-daily.yml?query=branch%3Amain+is%3Asuccess),
+  then install the inner SDK zip:
+
+  ```bash
+  python3 scripts/skia/setup_skia_sdk.py --archive /path/to/skia-sdk-linux-x64.zip
+  ```
+
+  CI currently publishes `skia-sdk-linux-x64`, `skia-sdk-macos-arm64`, and
+  `skia-sdk-windows-x64` artifacts. GitHub wraps artifacts in an outer zip; the
+  install command above expects the inner `skia-sdk-<platform>-<arch>.zip`.
 
 The SDK layout is:
 
-- Skia headers under: `.reactcpp/skia-sdk/<platform>-<arch>/skia/include/...`
-- Skia libraries under: `.reactcpp/skia-sdk/<platform>-<arch>/lib/`
-- A manifest at: `.reactcpp/skia-sdk/<platform>-<arch>/reactcpp-skia-sdk.json`
+- Skia headers: `.reactcpp/skia-sdk/<platform>-<arch>/skia/include/...`
+- Skia libraries: `.reactcpp/skia-sdk/<platform>-<arch>/lib/`
+- Manifest: `.reactcpp/skia-sdk/<platform>-<arch>/skia-sdk.json`
 
-The profile enables the capabilities this runtime currently needs:
+The build profile enables Ganesh GL, CPU raster-compatible core rendering, and
+Linux text dependencies such as freetype, fontconfig, and harfbuzz.
 
-- Ganesh GL
-- CPU raster-compatible core rendering
-- Linux text dependencies: freetype, fontconfig, harfbuzz
+### SDL
 
-CMake still supports a legacy external `skia-builder` checkout through
-`-DSKIA_BUILDER_ROOT=/path/to/skia-builder`, but the SDK path is preferred.
-
-### 2) SDL3
-
-SDL3 development headers/libs must be installed on your machine.
+Install SDL3 development headers/libs for your platform. CMake also accepts SDL2
+as a compatibility fallback while the runtime keeps the public behavior aligned
+with the SDL3 path.
 
 ## Build
 
@@ -187,7 +186,7 @@ If your SDK lives outside the default `.reactcpp/skia-sdk/<platform>-<arch>`
 location, pass:
 
 ```bash
-cmake -S . -B build -DREACTCPP_SKIA_SDK_ROOT=/path/to/reactcpp-skia-sdk
+cmake -S . -B build -DSKIA_SDK_ROOT=/path/to/skia-sdk
 ```
 
 Run:
@@ -211,23 +210,6 @@ to stderr with a stable prefix:
 The initial window size is computed at runtime as **0.6x** the primary display's
 usable desktop bounds (no hard-coded 800x600).
 
-## Notes
+## License
 
-If neither the ReactCpp Skia SDK nor the legacy `SKIA_BUILDER_ROOT` checkout is
-available, CMake skips the SDL+Skia demo target and still builds the non-renderer
-unit tests.
-
-## Skia SDK automation
-
-`.github/workflows/skia-sdk-daily.yml` builds ReactCpp Skia SDK archives every
-day and on manual dispatch. The workflow uploads platform-specific artifacts:
-
-- `reactcpp-skia-sdk-linux-x64`
-- `reactcpp-skia-sdk-macos-arm64`
-- `reactcpp-skia-sdk-windows-x64`
-
-This keeps Skia as the only supported renderer while moving the hard part into a
-repeatable SDK build pipeline.
-
-For maintainers, `scripts/skia/build_skia_sdk.py` is the lower-level build
-script used by both local setup and CI.
+ReactCpp is distributed under the terms in [LICENSE](LICENSE).

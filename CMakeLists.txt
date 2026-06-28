@@ -34,22 +34,17 @@ else()
     set(REACTCPP_HOST_ARCH "${REACTCPP_HOST_ARCH_RAW}")
 endif()
 
-set(REACTCPP_SKIA_SDK_ROOT_DEFAULT
+set(SKIA_SDK_ROOT_DEFAULT
     "${CMAKE_CURRENT_SOURCE_DIR}/.reactcpp/skia-sdk/${REACTCPP_HOST_PLATFORM}-${REACTCPP_HOST_ARCH}"
 )
-set(REACTCPP_SKIA_SDK_ROOT "${REACTCPP_SKIA_SDK_ROOT_DEFAULT}" CACHE PATH "Path to ReactCpp Skia SDK")
-
-set(SKIA_BUILDER_ROOT_DEFAULT "${CMAKE_CURRENT_SOURCE_DIR}/../skia-builder")
-set(SKIA_BUILDER_ROOT "${SKIA_BUILDER_ROOT_DEFAULT}" CACHE PATH "Fallback path to skia-builder directory")
+set(SKIA_SDK_ROOT "${SKIA_SDK_ROOT_DEFAULT}" CACHE PATH "Path to Skia SDK")
 
 if (REACTCPP_BUILD_DEMO
-        AND NOT EXISTS "${REACTCPP_SKIA_SDK_ROOT}/skia/include/core/SkCanvas.h"
-        AND NOT EXISTS "${SKIA_BUILDER_ROOT}")
-    message(WARNING
-        "No ReactCpp Skia SDK found at ${REACTCPP_SKIA_SDK_ROOT}, and fallback skia-builder was not found at ${SKIA_BUILDER_ROOT}. "
-        "Run: python3 scripts/skia/setup_skia_sdk.py"
+        AND NOT EXISTS "${SKIA_SDK_ROOT}/skia/include/core/SkCanvas.h")
+    message(FATAL_ERROR
+        "Skia SDK not found at ${SKIA_SDK_ROOT}. "
+        "Run: python3 scripts/skia/setup_skia_sdk.py, or pass -DSKIA_SDK_ROOT=/path/to/skia-sdk"
     )
-    set(REACTCPP_BUILD_DEMO OFF)
 endif()
 
 add_executable(react_cpp_text_edit_tests
@@ -289,16 +284,10 @@ else()
     )
 endif()
 
-    # Skia: prefer the ReactCpp SDK produced by scripts/skia/build_skia_sdk.py.
-    if (EXISTS "${REACTCPP_SKIA_SDK_ROOT}/skia/include/core/SkCanvas.h")
-        set(SKIA_ROOT "${REACTCPP_SKIA_SDK_ROOT}/skia")
-        set(SKIA_LIB_DIR "${REACTCPP_SKIA_SDK_ROOT}/lib")
-        message(STATUS "Using ReactCpp Skia SDK: ${REACTCPP_SKIA_SDK_ROOT}")
-    else()
-        set(SKIA_ROOT "${SKIA_BUILDER_ROOT}/skia")
-        set(SKIA_LIB_DIR "${SKIA_BUILDER_ROOT}/build")
-        message(STATUS "Using fallback skia-builder checkout: ${SKIA_BUILDER_ROOT}")
-    endif()
+    # Skia SDK produced by scripts/skia/build_skia_sdk.py or installed from CI archive.
+    set(SKIA_ROOT "${SKIA_SDK_ROOT}/skia")
+    set(SKIA_LIB_DIR "${SKIA_SDK_ROOT}/lib")
+    message(STATUS "Using Skia SDK: ${SKIA_SDK_ROOT}")
 
     if (WIN32)
         set(SKIA_LIB_PATH_DEFAULT "${SKIA_LIB_DIR}/skia.lib")

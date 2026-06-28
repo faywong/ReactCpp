@@ -61,18 +61,18 @@ jobs:
         run: |
           brew install pkg-config
 
-      - name: Build ReactCpp Skia SDK
+      - name: Build Skia SDK
         shell: bash
         run: |
           python scripts/skia/build_skia_sdk.py \
             --platform "${{ matrix.platform }}" \
             --arch "${{ matrix.arch }}" \
             --sdk-root "$PWD/.reactcpp/skia-sdk" \
-            --archive "$PWD/reactcpp-skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip"
+            --archive "$PWD/skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip"
 
       - name: Upload Skia SDK
         uses: actions/upload-artifact@v4
         with:
-          name: reactcpp-skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}
-          path: reactcpp-skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          name: skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}
+          path: skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip
           retention-days: 14

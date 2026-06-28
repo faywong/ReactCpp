@@ -1,4 +1,6 @@
 
+#include <cmath>
+
 #include "skia_runtime.hpp"
 
 #include "test_util.hpp"
@@ -95,8 +97,76 @@ static void test_canvas_drawio_frame_records() {
     REACTCPP_TEST_ASSERT(!frame.retained_pictures.empty());
 }
 
+static void test_text_uses_intrinsic_width_inside_stretch_parent() {
+    TextProps label;
+    label.text = "Short label";
+    label.text_size = 18.0f;
+
+    auto app = [&] {
+        ViewProps root;
+        root.style.width = 420.0f;
+        root.style.height = 120.0f;
+        root.style.align_items = AlignItems::Stretch;
+        return View(root, {Text(label)});
+    };
+
+    SkiaRuntime rt(app, reactcpp::PlatformBridge{}, 800, 600);
+    const reactcpp::Frame frame = rt.render_to_frame(420, 120);
+    REACTCPP_TEST_ASSERT(frame.picture);
+
+    const InstanceNode& root = rt.test_root_instance();
+    REACTCPP_TEST_ASSERT(root.children.size() == 1);
+    const InstanceNode& text = *root.children[0];
+
+    SkFont font;
+    font.setSize(label.text_size);
+    font.setTypeface(pick_typeface(g_font_mgr));
+    const float measured = font.measureText(label.text.c_str(), label.text.size(), SkTextEncoding::kUTF8);
+
+    REACTCPP_TEST_ASSERT(text.layout.width < 420.0f);
+    REACTCPP_TEST_ASSERT(std::abs(text.layout.width - measured) < 1.0f);
+}
+
+static void test_context_menu_copies_selected_text_element() {
+    TextProps label;
+    label.text = "Copy this text";
+    label.text_size = 18.0f;
+
+    auto app = [&] {
+        ViewProps root;
+        root.style.width = 240.0f;
+        root.style.height = 80.0f;
+        return View(root, {Text(label)});
+    };
+
+    reactcpp::PlatformCommandQueue cmds;
+    reactcpp::ClipboardRpc clipboard;
+    SkiaRuntime rt(app, reactcpp::PlatformBridge{&cmds, &clipboard}, 240, 80);
+
+    const reactcpp::Frame first = rt.render_to_frame(240, 80);
+    REACTCPP_TEST_ASSERT(first.picture);
+
+    rt.handle_mouse_button_down(4.0f, 4.0f, 1, SDL_BUTTON_RIGHT);
+    const reactcpp::Frame menu_frame = rt.render_to_frame(240, 80);
+    REACTCPP_TEST_ASSERT(menu_frame.picture);
+
+    rt.handle_mouse_button_down(18.0f, 18.0f, 1, SDL_BUTTON_LEFT);
+
+    bool found_clipboard = false;
+    while (auto cmd = cmds.try_pop()) {
+        if (cmd->type == reactcpp::PlatformCmdType::SetClipboardText) {
+            REACTCPP_TEST_ASSERT(cmd->text == label.text);
+            found_clipboard = true;
+            break;
+        }
+    }
+    REACTCPP_TEST_ASSERT(found_clipboard);
+}
+
 int main() {
     test_frame_retains_nested_cached_pictures_across_rerecord();
     test_canvas_drawio_frame_records();
+    test_text_uses_intrinsic_width_inside_stretch_parent();
+    test_context_menu_copies_selected_text_element();
     return 0;
 }

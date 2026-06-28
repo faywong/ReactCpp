@@ -222,7 +222,7 @@ def main() -> int:
             shutil.copy2(src, sdk_dir / "lib" / name)
 
     manifest = {
-        "name": "reactcpp-skia-sdk",
+        "name": "skia-sdk",
         "platform": args.platform,
         "arch": args.arch,
         "builder_url": args.builder_url,
@@ -230,9 +230,9 @@ def main() -> int:
         "gn_args": gn_args,
         "shared_lib": shared_lib,
     }
-    (sdk_dir / "reactcpp-skia-sdk.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (sdk_dir / "skia-sdk.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
-    archive = args.archive or (args.sdk_root / f"reactcpp-skia-sdk-{args.platform}-{args.arch}.zip")
+    archive = args.archive or (args.sdk_root / f"skia-sdk-{args.platform}-{args.arch}.zip")
     package_sdk(sdk_dir, archive.resolve())
     print(f"SDK: {sdk_dir}")
     print(f"Archive: {archive.resolve()}")

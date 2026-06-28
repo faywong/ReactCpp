@@ -61,11 +61,11 @@ def download_artifact(repo: str, run_id: str, artifact_name: str, dest: Path):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Install a ReactCpp Skia SDK.")
+    parser = argparse.ArgumentParser(description="Install a Skia SDK.")
     parser.add_argument("--sdk-root", type=Path, default=REPO_ROOT / ".reactcpp" / "skia-sdk")
     parser.add_argument("--platform", default=host_platform(), choices=["linux", "macos", "windows"])
     parser.add_argument("--arch", default=host_arch(), choices=["x86", "x64", "arm", "arm64", "universal2"])
-    parser.add_argument("--archive", type=Path, help="Install an existing reactcpp-skia-sdk zip archive")
+    parser.add_argument("--archive", type=Path, help="Install an existing skia-sdk zip archive")
     parser.add_argument("--from-github-artifact", action="store_true", help="Download the latest successful daily artifact via gh")
     parser.add_argument("--repo", default="faywong/ReactCpp", help="GitHub repo used with --from-github-artifact")
     parser.add_argument("--run-id", help="Specific GitHub Actions run id used with --from-github-artifact")
@@ -79,9 +79,9 @@ def main() -> int:
     if args.from_github_artifact:
         if shutil.which("gh") is None:
             raise RuntimeError("gh is required for --from-github-artifact")
-        artifact = f"reactcpp-skia-sdk-{args.platform}-{args.arch}"
+        artifact = f"skia-sdk-{args.platform}-{args.arch}"
         run_id = args.run_id or latest_successful_run(args.repo)
-        with tempfile.TemporaryDirectory(prefix="reactcpp-skia-artifact-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="skia-sdk-artifact-") as tmp:
             archive = download_artifact(args.repo, run_id, artifact, Path(tmp))
             install_archive(archive, args.sdk_root.resolve())
         print(f"Installed {artifact} from GitHub Actions run {run_id}")

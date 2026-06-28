@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <cctype>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -33,6 +34,7 @@
 #include "core/SkRRect.h"
 #include "core/SkRect.h"
 #include "core/SkRefCnt.h"
+#include "core/SkSpan.h"
 #include "core/SkSurface.h"
 #include "core/SkTypeface.h"
 
@@ -46,6 +48,7 @@
 #include "gpu/ganesh/SkSurfaceGanesh.h"
 
 #include "effects/SkGradientShader.h"
+#include "effects/SkDashPathEffect.h"
 
 #include "ports/SkFontMgr_fontconfig.h"
 #include "ports/SkFontScanner_FreeType.h"
@@ -277,6 +280,7 @@ struct DrawioCell {
     float width{0.0f};
     float height{0.0f};
     bool has_geometry{false};
+    std::vector<SkPoint> points;
 };
 
 struct DrawioDiagram {
@@ -320,16 +324,30 @@ static std::string strip_html_tags(std::string_view in) {
     std::string out;
     out.reserve(in.size());
     bool in_tag = false;
+    std::string tag;
     for (char c : in) {
         if (c == '<') {
             in_tag = true;
+            tag.clear();
             continue;
         }
         if (c == '>') {
+            std::string lower;
+            lower.reserve(tag.size());
+            for (char tc : tag) {
+                lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(tc))));
+            }
+            if (lower == "br" || lower == "br/" || lower == "/div" || lower == "/p") {
+                if (!out.empty() && out.back() != '\n') out.push_back('\n');
+            }
             in_tag = false;
             continue;
         }
-        if (!in_tag) out.push_back(c);
+        if (in_tag) {
+            tag.push_back(c);
+        } else {
+            out.push_back(c);
+        }
     }
     return out;
 }
@@ -385,6 +403,14 @@ static std::string drawio_style_value(std::string_view style, std::string_view k
 
 static bool drawio_style_flag(std::string_view style, std::string_view key) {
     return drawio_style_value(style, key) == "1";
+}
+
+static float drawio_style_float(std::string_view style, std::string_view key, float fallback) {
+    const std::string value = drawio_style_value(style, key);
+    if (value.empty()) return fallback;
+    char* end = nullptr;
+    const float out = std::strtof(value.c_str(), &end);
+    return end && end != value.c_str() ? out : fallback;
 }
 
 static SkColor parse_drawio_color(const std::string& value, SkColor fallback) {
@@ -446,6 +472,15 @@ static DrawioDiagram parse_drawio_diagram(std::string_view xml_input) {
                 cell.height = xml_attr_float(geom, "height");
                 cell.has_geometry = true;
             }
+        }
+
+        std::size_t point_pos = 0;
+        while ((point_pos = block.find("<mxPoint", point_pos)) != std::string_view::npos) {
+            const std::size_t point_end = block.find('>', point_pos);
+            if (point_end == std::string_view::npos) break;
+            const std::string_view point = block.substr(point_pos, point_end - point_pos + 1);
+            cell.points.push_back(SkPoint::Make(xml_attr_float(point, "x"), xml_attr_float(point, "y")));
+            point_pos = point_end + 1;
         }
 
         if ((!cell.id.empty()) && (cell.vertex || cell.edge)) {
@@ -637,28 +672,100 @@ public:
         auto center_of = [&](const DrawioCell& cell) {
             return SkPoint::Make(map_x(cell.x + cell.width * 0.5f), map_y(cell.y + cell.height * 0.5f));
         };
+        auto vertex_rect = [&](const DrawioCell& cell) {
+            return SkRect::MakeXYWH(
+                map_x(cell.x),
+                map_y(cell.y),
+                std::max(cell.width * scale, 1.0f),
+                std::max(cell.height * scale, 1.0f)
+            );
+        };
+        auto connection_point = [&](const DrawioCell& cell, SkPoint toward) {
+            const SkRect rect = vertex_rect(cell);
+            const SkPoint center = SkPoint::Make(rect.centerX(), rect.centerY());
+            const float dx = toward.x() - center.x();
+            const float dy = toward.y() - center.y();
+            if (std::abs(dx) <= 0.01f && std::abs(dy) <= 0.01f) {
+                return center;
+            }
+
+            const float hw = std::max(rect.width() * 0.5f, 0.5f);
+            const float hh = std::max(rect.height() * 0.5f, 0.5f);
+            const std::string shape = drawio_style_value(cell.style, "shape");
+
+            float t = 1.0f;
+            if (shape == "ellipse") {
+                const float denom = std::sqrt((dx * dx) / (hw * hw) + (dy * dy) / (hh * hh));
+                t = denom > 0.0f ? 1.0f / denom : 0.0f;
+            } else if (shape == "rhombus" || shape == "diamond") {
+                const float denom = std::abs(dx) / hw + std::abs(dy) / hh;
+                t = denom > 0.0f ? 1.0f / denom : 0.0f;
+            } else {
+                float tx = std::numeric_limits<float>::max();
+                float ty = std::numeric_limits<float>::max();
+                if (std::abs(dx) > 0.01f) tx = hw / std::abs(dx);
+                if (std::abs(dy) > 0.01f) ty = hh / std::abs(dy);
+                t = std::min(tx, ty);
+            }
+
+            return SkPoint::Make(center.x() + dx * t, center.y() + dy * t);
+        };
 
         canvas->save();
         canvas->clipRect(bounds, true);
 
         for (const DrawioCell& cell : diagram.cells) {
             if (!cell.edge) continue;
+
+            std::vector<SkPoint> points;
+            const DrawioCell* source = nullptr;
+            const DrawioCell* target = nullptr;
             const auto source_it = by_id.find(cell.source);
+            if (source_it != by_id.end() && source_it->second->vertex) {
+                source = source_it->second;
+                points.push_back(center_of(*source));
+            }
+            for (const SkPoint& point : cell.points) {
+                points.push_back(SkPoint::Make(map_x(point.x()), map_y(point.y())));
+            }
             const auto target_it = by_id.find(cell.target);
-            if (source_it == by_id.end() || target_it == by_id.end()) continue;
-            const DrawioCell* source = source_it->second;
-            const DrawioCell* target = target_it->second;
-            if (!source->vertex || !target->vertex) continue;
+            if (target_it != by_id.end() && target_it->second->vertex) {
+                target = target_it->second;
+                points.push_back(center_of(*target));
+            }
+            if (points.size() < 2) continue;
+
+            if (source) {
+                points.front() = connection_point(*source, points[1]);
+            }
+            if (target) {
+                points.back() = connection_point(*target, points[points.size() - 2]);
+            }
 
             SkPaint stroke;
             stroke.setAntiAlias(true);
             stroke.setStyle(SkPaint::kStroke_Style);
-            stroke.setStrokeWidth(std::max(1.2f, scale * 1.4f));
+            stroke.setStrokeCap(SkPaint::kRound_Cap);
+            stroke.setStrokeJoin(SkPaint::kRound_Join);
+            stroke.setStrokeWidth(std::max(1.2f, scale * drawio_style_float(cell.style, "strokeWidth", 1.4f)));
             stroke.setColor(parse_drawio_color(drawio_style_value(cell.style, "strokeColor"), static_cast<SkColor>(0xFF6B7280)));
+            if (drawio_style_flag(cell.style, "dashed")) {
+                const SkScalar intervals[] = {6.0f, 4.0f};
+                stroke.setPathEffect(SkDashPathEffect::Make(SkSpan<const SkScalar>(intervals, 2), 0.0f));
+            }
 
-            const SkPoint a = center_of(*source);
-            const SkPoint b = center_of(*target);
-            canvas->drawLine(a, b, stroke);
+            for (std::size_t i = 1; i < points.size(); ++i) {
+                canvas->drawLine(points[i - 1], points[i], stroke);
+            }
+
+            if (drawio_style_value(cell.style, "endArrow") != "none") {
+                draw_arrow_head(canvas, points[points.size() - 2], points.back(), stroke.getColor(), stroke.getStrokeWidth());
+            }
+
+            if (!cell.value.empty()) {
+                const SkPoint mid = points[points.size() / 2];
+                draw_label(cell.value, canvas, ctx, mid.x() - 80.0f, mid.y() - 12.0f, 160.0f, 24.0f, cell.style);
+            }
         }
 
         for (const DrawioCell& cell : diagram.cells) {
@@ -670,6 +777,87 @@ public:
     }
 
 private:
+    static void draw_arrow_head(SkCanvas* canvas, SkPoint from, SkPoint to, SkColor color, float stroke_width) {
+        const float dx = to.x() - from.x();
+        const float dy = to.y() - from.y();
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len <= 0.01f) return;
+
+        const float ux = dx / len;
+        const float uy = dy / len;
+        const float size = std::max(8.0f, stroke_width * 5.0f);
+        const float wing = size * 0.55f;
+
+        const SkPoint base = SkPoint::Make(to.x() - ux * size, to.y() - uy * size);
+        const SkPoint left = SkPoint::Make(base.x() - uy * wing, base.y() + ux * wing);
+        const SkPoint right = SkPoint::Make(base.x() + uy * wing, base.y() - ux * wing);
+
+        SkPaint stroke;
+        stroke.setAntiAlias(true);
+        stroke.setStyle(SkPaint::kStroke_Style);
+        stroke.setStrokeWidth(std::max(1.0f, stroke_width));
+        stroke.setStrokeCap(SkPaint::kRound_Cap);
+        stroke.setColor(color);
+        canvas->drawLine(to, left, stroke);
+        canvas->drawLine(to, right, stroke);
+    }
+
+    static void draw_label(
+        std::string_view text,
+        SkCanvas* canvas,
+        const DrawContext& ctx,
+        float x,
+        float y,
+        float w,
+        float h,
+        std::string_view style
+    ) {
+        if (text.empty() || w <= 1.0f || h <= 1.0f) return;
+
+        SkFont font;
+        font.setSize(std::clamp(drawio_style_float(style, "fontSize", std::clamp(h * 0.20f, 10.0f, 16.0f)), 8.0f, 28.0f));
+        font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkFontMetrics metrics;
+        font.getMetrics(&metrics);
+        const float line_height = font.getSize() * 1.25f;
+
+        auto measure = [&](std::string_view sv) -> float {
+            return font.measureText(sv.data(), sv.size(), SkTextEncoding::kUTF8);
+        };
+
+        const float pad = 4.0f;
+        const float max_w = std::max(w - pad * 2.0f, 1.0f);
+        const auto spans = reactcpp::text::wrap_text_spans(text, max_w, measure);
+        if (spans.empty()) return;
+
+        const float total_h = static_cast<float>(spans.size()) * line_height;
+        float baseline = y + (h - total_h) * 0.5f - metrics.fAscent;
+
+        SkPaint text_paint;
+        text_paint.setAntiAlias(true);
+        text_paint.setColor(parse_drawio_color(drawio_style_value(style, "fontColor"), static_cast<SkColor>(0xFF111827)));
+
+        canvas->save();
+        canvas->clipRect(SkRect::MakeXYWH(x, y, w, h), true);
+        for (const auto& span : spans) {
+            const std::size_t start = std::min(span.start, text.size());
+            const std::size_t end = std::min(span.end, text.size());
+            if (end < start) continue;
+            const std::string line(text.substr(start, end - start));
+            const float line_w = measure(line);
+            float line_x = x + pad;
+            if (drawio_style_value(style, "align") == "right") {
+                line_x = x + w - pad - line_w;
+            } else if (drawio_style_value(style, "align") != "left") {
+                line_x = x + (w - line_w) * 0.5f;
+            }
+            canvas->drawString(line.c_str(), line_x, baseline, font, text_paint);
+            baseline += line_height;
+        }
+        canvas->restore();
+    }
+
     static void draw_empty_message(SkCanvas* canvas, const DrawContext& ctx, SkRect bounds) {
         SkFont font;
         font.setSize(14.0f);
@@ -682,7 +870,8 @@ private:
 
     static void draw_vertex(const DrawioCell& cell, SkCanvas* canvas, const DrawContext& ctx, float x, float y, float w, float h) {
         const SkRect rect = SkRect::MakeXYWH(x, y, w, h);
-        const bool ellipse = drawio_style_value(cell.style, "shape") == "ellipse";
+        const std::string shape = drawio_style_value(cell.style, "shape");
+        const bool ellipse = shape == "ellipse";
         const bool rounded = drawio_style_flag(cell.style, "rounded");
 
         SkPaint fill;
@@ -693,12 +882,52 @@ private:
         SkPaint stroke;
         stroke.setAntiAlias(true);
         stroke.setStyle(SkPaint::kStroke_Style);
-        stroke.setStrokeWidth(1.4f);
+        stroke.setStrokeWidth(std::max(1.0f, drawio_style_float(cell.style, "strokeWidth", 1.4f)));
         stroke.setColor(parse_drawio_color(drawio_style_value(cell.style, "strokeColor"), static_cast<SkColor>(0xFF374151)));
+        if (drawio_style_flag(cell.style, "dashed")) {
+            const SkScalar intervals[] = {6.0f, 4.0f};
+            stroke.setPathEffect(SkDashPathEffect::Make(SkSpan<const SkScalar>(intervals, 2), 0.0f));
+        }
 
         if (ellipse) {
             canvas->drawOval(rect, fill);
             canvas->drawOval(rect, stroke);
+        } else if (shape == "rhombus" || shape == "diamond") {
+            const SkPoint top = SkPoint::Make(rect.centerX(), rect.top());
+            const SkPoint right = SkPoint::Make(rect.right(), rect.centerY());
+            const SkPoint bottom = SkPoint::Make(rect.centerX(), rect.bottom());
+            const SkPoint left = SkPoint::Make(rect.left(), rect.centerY());
+            canvas->drawLine(top, right, stroke);
+            canvas->drawLine(right, bottom, stroke);
+            canvas->drawLine(bottom, left, stroke);
+            canvas->drawLine(left, top, stroke);
+        } else if (shape == "cylinder") {
+            const float cap_h = std::min(h * 0.22f, 22.0f);
+            canvas->drawRect(SkRect::MakeLTRB(rect.left(), rect.top() + cap_h * 0.5f, rect.right(), rect.bottom() - cap_h * 0.5f), fill);
+            canvas->drawOval(SkRect::MakeXYWH(x, y, w, cap_h), fill);
+            canvas->drawOval(SkRect::MakeXYWH(x, y + h - cap_h, w, cap_h), fill);
+            canvas->drawLine(rect.left(), rect.top() + cap_h * 0.5f, rect.left(), rect.bottom() - cap_h * 0.5f, stroke);
+            canvas->drawLine(rect.right(), rect.top() + cap_h * 0.5f, rect.right(), rect.bottom() - cap_h * 0.5f, stroke);
+            canvas->drawOval(SkRect::MakeXYWH(x, y, w, cap_h), stroke);
+            canvas->drawArc(SkRect::MakeXYWH(x, y + h - cap_h, w, cap_h), 0.0f, 180.0f, false, stroke);
+        } else if (shape == "swimlane") {
+            const float radius = rounded ? std::min(w, h) * 0.08f : 0.0f;
+            const float header_h = std::clamp(drawio_style_float(cell.style, "startSize", 28.0f), 18.0f, std::max(18.0f, h * 0.45f));
+            if (radius > 0.0f) {
+                canvas->drawRoundRect(rect, radius, radius, fill);
+                canvas->drawRoundRect(rect, radius, radius, stroke);
+            } else {
+                canvas->drawRect(rect, fill);
+                canvas->drawRect(rect, stroke);
+            }
+            canvas->drawLine(rect.left(), rect.top() + header_h, rect.right(), rect.top() + header_h, stroke);
+        } else if (shape == "image") {
+            canvas->drawRect(rect, fill);
+            canvas->drawRect(rect, stroke);
+            SkPaint mark = stroke;
+            mark.setColor(static_cast<SkColor>(0xFFCBD5E1));
+            canvas->drawLine(rect.left() + 6.0f, rect.top() + 6.0f, rect.right() - 6.0f, rect.bottom() - 6.0f, mark);
+            canvas->drawLine(rect.right() - 6.0f, rect.top() + 6.0f, rect.left() + 6.0f, rect.bottom() - 6.0f, mark);
         } else if (rounded) {
             const float radius = std::min(w, h) * 0.12f;
             canvas->drawRoundRect(rect, radius, radius, fill);
@@ -709,21 +938,7 @@ private:
         }
 
         if (cell.value.empty()) return;
-
-        SkFont font;
-        font.setSize(std::clamp(h * 0.20f, 10.0f, 16.0f));
-        font.setTypeface(pick_typeface(ctx.font_mgr));
-
-        SkFontMetrics metrics;
-        font.getMetrics(&metrics);
-        SkPaint text_paint;
-        text_paint.setAntiAlias(true);
-        text_paint.setColor(parse_drawio_color(drawio_style_value(cell.style, "fontColor"), static_cast<SkColor>(0xFF111827)));
-
-        const float text_w = font.measureText(cell.value.c_str(), cell.value.size(), SkTextEncoding::kUTF8);
-        const float text_x = x + (w - text_w) * 0.5f;
-        const float text_y = y + (h - (metrics.fDescent - metrics.fAscent)) * 0.5f - metrics.fAscent;
-        canvas->drawString(cell.value.c_str(), text_x, text_y, font, text_paint);
+        draw_label(cell.value, canvas, ctx, x, y, w, h, cell.style);
     }
 };
 
@@ -1132,7 +1347,7 @@ static YGSize measure_text_node(
     font.setSize(font_size);
     font.setTypeface(pick_typeface(g_font_mgr));
     const float measured = font.measureText(text.c_str(), text.size(), SkTextEncoding::kUTF8);
-    const float padding_x = 16.0f;
+    const float padding_x = inst->type == host_type_text() ? 0.0f : 16.0f;
     float out_w = measured + padding_x;
     if (width_mode == YGMeasureModeExactly) {
         out_w = width;
@@ -1171,6 +1386,9 @@ static void build_yoga_subtree(InstanceNode& node) {
 
     const FlexStyle& style = props_as_view_ref(node.current_vnode).style;
     apply_style(yn, style);
+    if (node.type == host_type_text() && !style.width) {
+        YGNodeStyleSetAlignSelf(yn, YGAlignFlexStart);
+    }
 
     if (node.type == host_type_text() || node.type == host_type_button() || node.type == host_type_input()) {
         YGNodeSetMeasureFunc(yn, measure_text_node);
@@ -1226,6 +1444,7 @@ public:
 
     void test_set_update_requested(bool v) { update_requested_ = v; }
     bool test_update_requested() const { return update_requested_; }
+    const InstanceNode& test_root_instance() const { return root_instance_; }
 #endif
 
     Element render_frame() {
@@ -1245,6 +1464,9 @@ public:
     }
 
     void draw(SkCanvas* canvas, int width, int height) {
+        surface_width_ = width;
+        surface_height_ = height;
+
         DrawContext ctx;
         ctx.surface_width = width;
         ctx.surface_height = height;
@@ -1261,6 +1483,7 @@ public:
         update_text_input_area_if_needed(ctx);
 
         render_cached_node(root_instance_, canvas, ctx);
+        draw_context_menu(canvas, ctx);
     }
 
     reactcpp::Frame render_to_frame(int width, int height) {
@@ -1282,11 +1505,34 @@ public:
         handle_mouse_button_down(x, y, 1);
     }
 
-    void handle_mouse_button_down(float win_x, float win_y, std::uint8_t clicks) {
+    void handle_mouse_button_down(float win_x, float win_y, std::uint8_t clicks, std::uint8_t button = SDL_BUTTON_LEFT) {
         const float x = win_x;
         const float y = win_y;
 
+        if (button == SDL_BUTTON_LEFT && context_menu_.open) {
+            if (handle_context_menu_click(x, y)) {
+                return;
+            }
+        }
+
         InstanceNode* hit = hit_test_at(root_instance_, x, y);
+        if (button == SDL_BUTTON_RIGHT) {
+            mouse_selecting_ = false;
+            mouse_select_target_ = nullptr;
+            this->set_mouse_capture(false);
+
+            set_focus(hit);
+            if (hit) {
+                open_context_menu(x, y, *hit);
+            } else {
+                close_context_menu();
+            }
+            request_update();
+            return;
+        }
+
+        close_context_menu();
+
         InstanceNode* hit_input = find_ancestor_by_type(hit, host_type_input());
         InstanceNode* hit_input_area = find_ancestor_by_type(hit, host_type_input_area());
         InstanceNode* hit_editable = hit_input ? hit_input : hit_input_area;
@@ -1739,6 +1985,128 @@ private:
 
     void request_update() {
         update_requested_ = true;
+    }
+
+    struct ContextMenuState {
+        bool open{false};
+        float x{0.0f};
+        float y{0.0f};
+        std::string copy_text;
+        std::string label{"Copy"};
+    };
+
+    static constexpr float kContextMenuWidth = 136.0f;
+    static constexpr float kContextMenuItemHeight = 34.0f;
+    static constexpr float kContextMenuPadding = 6.0f;
+
+    static SkRect context_menu_rect(const ContextMenuState& menu, int surface_w, int surface_h) {
+        float x = menu.x;
+        float y = menu.y;
+        const float w = kContextMenuWidth;
+        const float h = kContextMenuItemHeight;
+        x = std::clamp(x, kContextMenuPadding, std::max(kContextMenuPadding, static_cast<float>(surface_w) - w - kContextMenuPadding));
+        y = std::clamp(y, kContextMenuPadding, std::max(kContextMenuPadding, static_cast<float>(surface_h) - h - kContextMenuPadding));
+        return SkRect::MakeXYWH(x, y, w, h);
+    }
+
+    static void append_copyable_text(const InstanceNode& node, std::string& out) {
+        std::visit([&](const auto& props) {
+            using P = std::decay_t<decltype(props)>;
+            if constexpr (std::is_same_v<P, TextProps>) {
+                out += props.text;
+            } else if constexpr (std::is_same_v<P, ButtonProps>) {
+                out += props.label;
+            } else if constexpr (std::is_same_v<P, InputProps> || std::is_same_v<P, InputAreaProps>) {
+                if (node.editable_state) {
+                    const auto sel = selection_from(*node.editable_state);
+                    if (reactcpp::text::has_non_empty_selection(sel)) {
+                        out += reactcpp::text::selected_substr(node.editable_state->value, sel);
+                    } else {
+                        out += node.editable_state->value.to_string();
+                    }
+                } else {
+                    out += props.value;
+                }
+            } else if constexpr (std::is_same_v<P, CanvasProps>) {
+                out += props.drawio_xml;
+            }
+        }, node.current_vnode.props);
+
+        for (const auto& child : node.children) {
+            std::string child_text;
+            append_copyable_text(*child, child_text);
+            if (!child_text.empty()) {
+                if (!out.empty()) out.push_back('\n');
+                out += child_text;
+            }
+        }
+    }
+
+    static std::string copyable_text_for(const InstanceNode& node) {
+        std::string out;
+        append_copyable_text(node, out);
+        return out;
+    }
+
+    void open_context_menu(float x, float y, const InstanceNode& target) {
+        context_menu_.open = true;
+        context_menu_.x = x;
+        context_menu_.y = y;
+        context_menu_.copy_text = copyable_text_for(target);
+    }
+
+    void close_context_menu() {
+        if (!context_menu_.open) return;
+        context_menu_.open = false;
+        context_menu_.copy_text.clear();
+    }
+
+    bool handle_context_menu_click(float x, float y) {
+        const SkRect rect = context_menu_rect(context_menu_, surface_width_, surface_height_);
+        const bool inside = rect.contains(x, y);
+        if (inside && !context_menu_.copy_text.empty()) {
+            set_clipboard_text(context_menu_.copy_text);
+        }
+        close_context_menu();
+        request_update();
+        return inside;
+    }
+
+    void draw_context_menu(SkCanvas* canvas, const DrawContext& ctx) const {
+        if (!context_menu_.open) return;
+
+        const SkRect rect = context_menu_rect(context_menu_, ctx.surface_width, ctx.surface_height);
+        const bool enabled = !context_menu_.copy_text.empty();
+
+        SkPaint shadow;
+        shadow.setAntiAlias(true);
+        shadow.setColor(SkColorSetARGB(55, 0, 0, 0));
+        canvas->drawRoundRect(rect.makeOffset(0.0f, 2.0f), 6.0f, 6.0f, shadow);
+
+        SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setColor(SK_ColorWHITE);
+        canvas->drawRoundRect(rect, 6.0f, 6.0f, fill);
+
+        SkPaint stroke;
+        stroke.setAntiAlias(true);
+        stroke.setStyle(SkPaint::kStroke_Style);
+        stroke.setStrokeWidth(1.0f);
+        stroke.setColor(static_cast<SkColor>(0xFFE5E7EB));
+        canvas->drawRoundRect(rect, 6.0f, 6.0f, stroke);
+
+        SkFont font;
+        font.setSize(15.0f);
+        font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkPaint text;
+        text.setAntiAlias(true);
+        text.setColor(enabled ? static_cast<SkColor>(0xFF111827) : static_cast<SkColor>(0xFF9CA3AF));
+
+        SkFontMetrics metrics;
+        font.getMetrics(&metrics);
+        const float baseline = rect.top() + (rect.height() - (metrics.fDescent - metrics.fAscent)) * 0.5f - metrics.fAscent;
+        canvas->drawString(context_menu_.label.c_str(), rect.left() + 14.0f, baseline, font, text);
     }
 
     void clear_composition() {
@@ -2605,6 +2973,7 @@ private:
 
     bool mouse_selecting_{false};
     InstanceNode* mouse_select_target_{nullptr};
+    ContextMenuState context_menu_{};
 
     int surface_width_{0};
     int surface_height_{0};
@@ -2847,7 +3216,7 @@ int run_react_app(const AppRenderFunc& app) {
 
             switch (ev.type) {
             case reactcpp::UiEventType::MouseButtonDown:
-                runtime.handle_mouse_button_down(ev.x, ev.y, ev.clicks);
+                runtime.handle_mouse_button_down(ev.x, ev.y, ev.clicks, ev.mouse_button);
                 break;
             case reactcpp::UiEventType::MouseMotion:
                 runtime.handle_mouse_move(ev.x, ev.y);
@@ -2932,12 +3301,14 @@ int run_react_app(const AppRenderFunc& app) {
                 break;
             }
 
-            if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
+            if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN
+                    && (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT)) {
                 reactcpp::UiEvent ev;
                 ev.type = reactcpp::UiEventType::MouseButtonDown;
                 ev.x = static_cast<float>(e.button.x);
                 ev.y = static_cast<float>(e.button.y);
                 ev.clicks = e.button.clicks;
+                ev.mouse_button = e.button.button;
                 ui_events.push(std::move(ev));
             } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_MOTION) {
                 if (e.motion.state & SDL_BUTTON_LMASK) {
@@ -3184,8 +3555,14 @@ int run_react_app(const AppRenderFunc& app) {
         while (SDL_PollEvent(&e)) {
             if (e.type == REACTCPP_SDL_EVENT_QUIT) {
                 running = false;
-            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
-                runtime.handle_mouse_button_down(static_cast<float>(e.button.x), static_cast<float>(e.button.y), e.button.clicks);
+            } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_BUTTON_DOWN
+                    && (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT)) {
+                runtime.handle_mouse_button_down(
+                    static_cast<float>(e.button.x),
+                    static_cast<float>(e.button.y),
+                    e.button.clicks,
+                    e.button.button
+                );
             } else if (e.type == REACTCPP_SDL_EVENT_MOUSE_MOTION) {
                 if (e.motion.state & SDL_BUTTON_LMASK) {
                     runtime.handle_mouse_move(static_cast<float>(e.motion.x), static_cast<float>(e.motion.y));
