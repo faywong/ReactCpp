@@ -688,6 +688,21 @@ if (PkgConfig_FOUND)
     endif()
 endif()
 
+if (APPLE)
+    set(REACTCPP_APPLE_FRAMEWORK_LINKS
+        "-framework Foundation"
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework CoreText"
+    )
+
+    target_link_libraries(reactcpp PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
+    target_link_libraries(reactcpp_demo PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
+    target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
+    target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
+    target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
+endif()
+
 target_link_libraries(reactcpp_demo
     PRIVATE
         Threads::Threads

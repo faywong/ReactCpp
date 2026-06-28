@@ -50,10 +50,12 @@
 #include "effects/SkGradientShader.h"
 #include "effects/SkDashPathEffect.h"
 
+#if defined(__linux__) || defined(__CYGWIN__)
 #include "ports/SkFontMgr_fontconfig.h"
 #include "ports/SkFontScanner_FreeType.h"
 
 #include <fontconfig/fontconfig.h>
+#endif
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -150,6 +152,7 @@ struct FontconfigFontMatch {
     int ttc_index{0};
 };
 
+#if defined(__linux__) || defined(__CYGWIN__)
 static std::optional<FontconfigFontMatch> match_cjk_font_with_fontconfig() {
     FcConfig* config = FcInitLoadConfigAndFonts();
     if (!config) return std::nullopt;
@@ -201,15 +204,18 @@ static std::optional<FontconfigFontMatch> match_cjk_font_with_fontconfig() {
     FcConfigDestroy(config);
     return out;
 }
+#endif
 
 static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>& mgr) {
     if (!mgr) return nullptr;
     thread_local sk_sp<SkTypeface> cjk_typeface;
     if (!cjk_typeface) {
+#if defined(__linux__) || defined(__CYGWIN__)
         static const std::optional<FontconfigFontMatch> cjk_match = match_cjk_font_with_fontconfig();
         if (cjk_match) {
             cjk_typeface = mgr->makeFromFile(cjk_match->file.c_str(), cjk_match->ttc_index);
         }
+#endif
         if (!cjk_typeface) {
             const char* zh[] = {"zh", "zh-CN", "zh-Hans"};
             cjk_typeface = mgr->matchFamilyStyleCharacter(
@@ -228,6 +234,14 @@ static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>& mgr) {
     tf = mgr->matchFamilyStyle("Noto Sans", SkFontStyle::Normal());
     if (tf) return tf;
     return mgr->matchFamilyStyle("DejaVu Sans", SkFontStyle::Normal());
+}
+
+static sk_sp<SkFontMgr> create_font_manager() {
+#if defined(__linux__) || defined(__CYGWIN__)
+    return SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
+#else
+    return SkFontMgr::RefDefault();
+#endif
 }
 
 static const ViewProps& props_as_view_ref(const Element& el) {
@@ -1430,7 +1444,7 @@ public:
         , surface_width_(surface_w)
         , surface_height_(surface_h)
         , platform_(platform) {
-        font_mgr_ = SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
+        font_mgr_ = create_font_manager();
 
         g_skia_dispatcher.request_update = &SkiaRuntime::request_update_trampoline;
         g_skia_dispatcher.request_update_ctx = this;
