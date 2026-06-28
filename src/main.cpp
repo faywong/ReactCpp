@@ -1,10 +1,101 @@
 #include "element_dsl.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <exception>
+#include <memory>
+#include <random>
+#include <thread>
+#include <vector>
+
+#include <atomic>
+#include <chrono>
 #include <string>
 
 using namespace reactcpp::ui;
+
+namespace {
+
+struct LiveChartData {
+    std::shared_ptr<reactcpp::VectorDataSource<reactcpp::LinePoint>> line_points =
+        std::make_shared<reactcpp::VectorDataSource<reactcpp::LinePoint>>();
+    std::shared_ptr<reactcpp::VectorDataSource<reactcpp::LinePoint>> scatter_points =
+        std::make_shared<reactcpp::VectorDataSource<reactcpp::LinePoint>>();
+    std::shared_ptr<reactcpp::VectorDataSource<reactcpp::LinePoint>> area_points =
+        std::make_shared<reactcpp::VectorDataSource<reactcpp::LinePoint>>();
+    std::shared_ptr<reactcpp::VectorDataSource<double>> bar_values =
+        std::make_shared<reactcpp::VectorDataSource<double>>();
+    std::shared_ptr<reactcpp::VectorDataSource<double>> bar_x =
+        std::make_shared<reactcpp::VectorDataSource<double>>();
+    std::shared_ptr<reactcpp::VectorDataSource<double>> circle_x =
+        std::make_shared<reactcpp::VectorDataSource<double>>();
+    std::shared_ptr<reactcpp::VectorDataSource<double>> circle_y =
+        std::make_shared<reactcpp::VectorDataSource<double>>();
+    std::shared_ptr<reactcpp::VectorDataSource<double>> circle_r =
+        std::make_shared<reactcpp::VectorDataSource<double>>();
+    std::shared_ptr<reactcpp::VectorDataSource<double>> histogram_samples =
+        std::make_shared<reactcpp::VectorDataSource<double>>();
+
+    std::atomic<bool> started{false};
+    std::jthread worker;
+
+    void start() {
+        bool expected = false;
+        if (!started.compare_exchange_strong(expected, true)) {
+            return;
+        }
+
+        line_points->set_window_size(240);
+        line_points->set_time_window(60.0);
+        scatter_points->set_window_size(240);
+        scatter_points->set_time_window(60.0);
+        area_points->set_window_size(240);
+        area_points->set_time_window(60.0);
+        bar_values->set_window_size(120);
+        bar_x->set_window_size(120);
+        circle_x->set_window_size(200);
+        circle_y->set_window_size(200);
+        circle_r->set_window_size(200);
+        histogram_samples->set_window_size(1200);
+
+        worker = std::jthread([this](std::stop_token stop) {
+            std::mt19937 rng(20260628);
+            std::normal_distribution<double> noise(0.0, 1.0);
+            std::size_t tick = 0;
+
+            while (!stop.stop_requested()) {
+                const double t = static_cast<double>(tick) * 0.08;
+                const double mean = std::sin(t * 0.12) * 2.0;
+                std::normal_distribution<double> hist_noise(mean, 4.5);
+                const double x = static_cast<double>(tick) * 0.25;
+                const double y = std::sin(x * 0.35 + t) * 18.0 + std::sin(x * 0.11 + t * 0.6) * 4.0;
+                line_points->push_back({x, y});
+                scatter_points->push_back({x, y + std::sin(x * 1.1 - t) + 8.0 + noise(rng) * 0.8});
+                area_points->push_back({x, y * 0.55 + 18.0});
+
+                bar_x->push_back(x);
+                bar_values->push_back(
+                    std::sin(x * 0.22 + t * 0.5) * 30.0 + 35.0 + std::cos(t * 0.8 + x * 0.3) * 4.0
+                );
+
+                circle_x->push_back((std::fmod(x, 26.0) - 2.0));
+                circle_y->push_back(std::cos(x * 0.06 + t) * 8.0 + 18.0);
+                circle_r->push_back(2.0 + std::fmod(std::fabs(std::sin(static_cast<double>(tick) * 0.15 + t * 0.7)) * 6.0, 1.0) * 2.0);
+                histogram_samples->push_back(hist_noise(rng));
+
+                ++tick;
+                std::this_thread::sleep_for(std::chrono::milliseconds(80));
+            }
+        });
+    }
+};
+
+LiveChartData& live_chart_data() {
+    static LiveChartData data;
+    return data;
+}
+
+} // namespace
 
 std::string ArchitectureDrawioXml() {
     return R"drawio(
@@ -95,6 +186,9 @@ std::string ArchitectureDrawioXml() {
 
 Element AppRoot() {
     auto counter = use_state<int>(0);
+    live_chart_data().start();
+
+    auto& charts = live_chart_data();
 
     return view()
         .column()
@@ -159,12 +253,106 @@ Element AppRoot() {
 
         text()
             .margin(6.0f)
+            .value("Charts powered by VectorDataSource + request_repaint (live)")
+            .text_size(18.0f),
+
+        line_chart()
+            .margin(6.0f)
+            .size(900.0f, 240.0f)
+            .title("Streaming Line (windowed)")
+            .xlabel("time")
+            .ylabel("value")
+            .theme(ChartTheme::Seaborn)
+            .tick_count(8)
+            .show_grid(true)
+            .grid(ChartGrid::Both)
+            .bg(1.0f, 1.0f, 1.0f)
+            .source(charts.line_points)
+            .line_color(0.11f, 0.43f, 0.82f)
+            .marker_color(0.11f, 0.33f, 0.55f)
+            .line_width(2.0f)
+            .show_markers(false)
+            .fill_area(true),
+
+        scatter_chart()
+            .margin(6.0f)
+            .size(900.0f, 240.0f)
+            .title("Streaming Scatter (windowed)")
+            .xlabel("time")
+            .ylabel("value")
+            .theme(ChartTheme::SolarizedDark)
+            .tick_count(7)
+            .grid(ChartGrid::Both)
+            .axis_width(1.1f)
+            .bg(0.99f, 0.99f, 1.0f)
+            .source(charts.scatter_points)
+            .line_color(0.0f, 0.0f, 0.0f)
+            .point_color(0.81f, 0.14f, 0.24f)
+            .marker_size(3.0f),
+
+        area_chart()
+            .margin(6.0f)
+            .size(900.0f, 240.0f)
+            .title("Streaming Area")
+            .xlabel("time")
+            .ylabel("smoothed value")
+            .theme(ChartTheme::SolarizedLight)
+            .tick_count(6)
+            .bg(1.0f, 1.0f, 1.0f)
+            .source(charts.area_points)
+            .fill(0.17f, 0.63f, 0.53f, 0.22f)
+            .line_color(0.11f, 0.43f, 0.82f)
+            .line_width(2.0f),
+
+        bar_chart()
+            .margin(6.0f)
+            .size(900.0f, 250.0f)
+            .title("Sliding Bars")
+            .xlabel("index")
+            .ylabel("amplitude")
+            .theme(ChartTheme::Monochrome)
+            .tick_count(5)
+            .bg(1.0f, 1.0f, 1.0f)
+            .values_source(charts.bar_values)
+            .x_source(charts.bar_x)
+            .color(0.23f, 0.5f, 0.84f, 1.0f),
+
+        circle_chart()
+            .margin(6.0f)
+            .size(900.0f, 260.0f)
+            .title("Streaming Bubble")
+            .xlabel("time")
+            .ylabel("value")
+            .theme(ChartTheme::HighContrast)
+            .tick_count(6)
+            .bg(1.0f, 1.0f, 1.0f)
+            .x_source(charts.circle_x)
+            .y_source(charts.circle_y)
+            .radius_source(charts.circle_r)
+            .fill_color(0.83f, 0.16f, 0.2f, 0.86f),
+
+        histogram_chart()
+            .margin(6.0f)
+            .size(900.0f, 220.0f)
+            .title("Streaming Histogram")
+            .xlabel("sample")
+            .ylabel("frequency density")
+            .theme(ChartTheme::Matplotlib)
+            .tick_count(7)
+            .bg(1.0f, 1.0f, 1.0f)
+            .source(charts.histogram_samples)
+            .bin_count(24)
+            .normalization(HistogramNormalization::CountDensity)
+            .color(0.26f, 0.76f, 0.89f),
+
+        text()
+            .margin(6.0f)
             .value("Draw.io architecture canvas:")
             .text_size(18.0f),
 
         canvas()
             .margin(6.0f)
-            .size(820.0f, 330.0f)
+            .size(900.0f, 330.0f)
             .bg(1.0f, 1.0f, 1.0f)
             .diagram_padding(18.0f)
             .drawio_xml(ArchitectureDrawioXml())

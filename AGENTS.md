@@ -179,6 +179,13 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
 - `CMakeLists.txt` searches `SKIA_SDK_ROOT` or the default `.reactcpp/skia-sdk/<platform>-<arch>` path and fails configuration if the Skia SDK is missing while the demo is enabled.
 - `.github/workflows/skia-sdk-daily.yml` builds daily/manual SDK artifacts for Linux x64, macOS arm64, and Windows x64.
 
+### Chart runtime + data source updates
+
+- Added runtime-side `VectorDataSource<T>` primitives for chart data: thread-safe mutation, revision tracking, fixed-size retention (`set_window_size`), and optional fixed-duration retention (`set_time_window`).
+- Introduced chart styling config surface (`ChartStyle`) and theme hooks (`ChartTheme`), including title, axis labels, grid, tick labels/counts, and axis/line colors.
+- Exposed these chart style knobs through DSL fluent chart nodes (`title`, `xlabel`, `ylabel`, `theme`, `tick_count`, `grid`, and related setters), and wired them into render paths in `skia_runtime.cpp`.
+- Demo streaming path now uses `source()` + `push_back` into `VectorDataSource` instead of full-vector replace, with bounded fixed/timeseries retention for charts.
+
 ### Font selection for CJK text
 
 - `SkiaRuntime` creates its Skia font manager through the fontconfig-backed Skia port on Linux.

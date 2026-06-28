@@ -17,6 +17,7 @@ namespace reactcpp {
 
 enum class UiEventType {
     Quit,
+    Tick,
     MouseButtonDown,
     MouseButtonUp,
     MouseMotion,

@@ -17,6 +17,7 @@ ReactCpp is a React-inspired C++20 cross-platform declarative GUI framework in a
 - **Context menu copy**: right-click an element to open a Skia-rendered Copy menu. Copy writes text-like element content to the system clipboard through the platform command queue.
 - **System font selection**: Linux text rendering uses fontconfig-backed Skia font management and chooses a system CJK font for Chinese text.
 - **Draw.io canvas**: `Canvas` renders a raw/uncompressed draw.io `mxGraphModel` subset directly with Skia, including common shapes, labels, waypoints, edge arrows, and shape-boundary connector endpoints.
+- **Charts components**: `line_chart`, `scatter_chart`, `area_chart`, `bar_chart`, `circle_chart`, and `histogram_chart` render from vector-like data sources and support theme-aware styling, grid/axis options, and live data updates.
 
 ## Runtime rendering pipeline
 
@@ -138,6 +139,41 @@ canvas()
 ```
 
 Compressed draw.io `<diagram>` payloads are not inflated yet; pass raw `mxGraphModel` XML for now.
+
+### Charts
+
+`line_chart`, `scatter_chart`, `area_chart`, `bar_chart`, `circle_chart`, and `histogram_chart` are implemented with shared data-source-driven rendering, theme styling, and streaming update behavior.
+
+```cpp
+line_chart()
+    .size(900.0f, 240.0f)
+    .title("Streaming Line")
+    .theme(ChartTheme::Seaborn)
+    .show_grid(true)
+    .grid(ChartGrid::Both)
+    .source(line_points_source)
+    .line_color(0.11f, 0.43f, 0.82f)
+    .line_width(2.0f)
+    .fill_area(true);
+
+histogram_chart()
+    .size(900.0f, 220.0f)
+    .title("Streaming Histogram")
+    .theme(ChartTheme::Matplotlib)
+    .source(histogram_source)
+    .bin_count(24)
+    .normalization(HistogramNormalization::CountDensity)
+    .color(0.26f, 0.76f, 0.89f);
+```
+
+Charts demo (live streaming + themes + layout):
+
+<video controls preload="none" width="960">
+  <source src="docs/images/charts-demo.webm" type="video/webm" />
+  Your browser does not support HTML5 video.
+</video>
+
+[Download the charts demo video (webm)](docs/images/charts-demo.webm)
 
 ### Context menu copy
 

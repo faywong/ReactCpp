@@ -2,14 +2,18 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <cctype>
+#include <iomanip>
+#include <limits>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
@@ -85,6 +89,623 @@ HookDispatcher& get_hook_dispatcher() {
 
 namespace {
 
+std::atomic<reactcpp::UiEventQueue*> g_repaint_event_queue{nullptr};
+std::atomic<bool> g_runtime_repaint_requested{false};
+std::atomic<bool> g_repaint_tick_pending{false};
+
+void request_repaint_impl() {
+    g_runtime_repaint_requested.store(true, std::memory_order_release);
+    if (reactcpp::UiEventQueue* queue = g_repaint_event_queue.load(std::memory_order_acquire)) {
+        if (!g_repaint_tick_pending.exchange(true, std::memory_order_acq_rel)) {
+            queue->push(reactcpp::UiEvent{reactcpp::UiEventType::Tick});
+        }
+    }
+}
+
+void register_repaint_queue(reactcpp::UiEventQueue* queue) {
+    g_repaint_event_queue.store(queue, std::memory_order_release);
+}
+
+void unregister_repaint_queue(reactcpp::UiEventQueue* queue) {
+    reactcpp::UiEventQueue* expected = queue;
+    g_repaint_event_queue.compare_exchange_strong(expected, nullptr);
+}
+
+bool take_runtime_repaint_request() {
+    return g_runtime_repaint_requested.exchange(false, std::memory_order_acq_rel);
+}
+
+void clear_repaint_tick_pending() {
+    g_repaint_tick_pending.store(false, std::memory_order_release);
+}
+}
+
+namespace reactcpp {
+
+void request_repaint() {
+    request_repaint_impl();
+}
+
+} // namespace reactcpp
+
+static SkRect make_safe_rect(float x, float y, float w, float h) {
+    const float ww = std::max(w, 1.0f);
+    const float hh = std::max(h, 1.0f);
+    return SkRect::MakeXYWH(x, y, ww, hh);
+}
+
+namespace {
+
+struct DrawContext {
+    int surface_width{0};
+    int surface_height{0};
+    sk_sp<SkFontMgr> font_mgr;
+};
+
+thread_local sk_sp<SkFontMgr> g_font_mgr;
+
+static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>&);
+static SkColor make_color(float r, float g, float b, float a);
+static void draw_chart_empty_message(SkCanvas* canvas, const DrawContext& ctx, const LayoutRect& plot, const char* text);
+
+static bool is_finite_double(double v) {
+    return std::isfinite(v);
+}
+
+static float clamp_f(float v, float lo, float hi) {
+    return std::clamp(v, lo, hi);
+}
+
+static std::string trim_chart_value_zeros(std::string value) {
+    const auto dot_pos = value.find('.');
+    if (dot_pos == std::string::npos) {
+        return value;
+    }
+    auto end = value.size();
+    while (end > dot_pos + 1 && value[end - 1] == '0') {
+        --end;
+    }
+    if (end > dot_pos + 1 && value[end - 1] == '.') {
+        --end;
+    }
+    value.erase(end);
+    if (value.empty()) {
+        value = "0";
+    }
+    return value;
+}
+
+static std::string format_chart_tick_label(double value) {
+    if (!is_finite_double(value)) {
+        return "";
+    }
+
+    std::ostringstream oss;
+    const double abs_val = std::fabs(value);
+    if ((abs_val >= 1e4 && abs_val < std::numeric_limits<double>::infinity()) ||
+        (abs_val > 0.0 && abs_val < 1e-3)) {
+        oss << std::scientific << std::setprecision(4) << value;
+    } else if (abs_val >= 1e3) {
+        oss << std::fixed << std::setprecision(1) << value;
+    } else {
+        oss << std::fixed << std::setprecision(4) << value;
+    }
+    return trim_chart_value_zeros(oss.str());
+}
+
+static ChartStyle resolve_chart_style(const ChartStyle& in) {
+    ChartStyle out = in;
+    apply_chart_theme_preset(out, out.theme);
+    out.tick_count = std::max(2, out.tick_count);
+    return out;
+}
+
+struct LineChartResolvedColors {
+    float line_r{0.067f};
+    float line_g{0.204f};
+    float line_b{0.561f};
+    float line_a{1.0f};
+
+    float marker_r{0.067f};
+    float marker_g{0.204f};
+    float marker_b{0.561f};
+    float marker_a{1.0f};
+
+    float fill_r{0.067f};
+    float fill_g{0.204f};
+    float fill_b{0.561f};
+    float fill_a{0.16f};
+};
+
+static LineChartResolvedColors resolve_line_colors(const LineChartProps& props, const ChartStyle& resolved_style) {
+    LineChartResolvedColors colors;
+
+    if (props.line_color_set) {
+        colors.line_r = props.line_r;
+        colors.line_g = props.line_g;
+        colors.line_b = props.line_b;
+        colors.line_a = props.line_a;
+    } else if (props.palette_set) {
+        colors.line_r = props.palette_r;
+        colors.line_g = props.palette_g;
+        colors.line_b = props.palette_b;
+        colors.line_a = props.palette_a;
+    } else {
+        colors.line_r = resolved_style.palette_line_r;
+        colors.line_g = resolved_style.palette_line_g;
+        colors.line_b = resolved_style.palette_line_b;
+        colors.line_a = resolved_style.palette_line_a;
+    }
+
+    if (props.marker_color_set) {
+        colors.marker_r = props.marker_r;
+        colors.marker_g = props.marker_g;
+        colors.marker_b = props.marker_b;
+        colors.marker_a = props.marker_a;
+    } else if (props.palette_set) {
+        colors.marker_r = props.palette_r;
+        colors.marker_g = props.palette_g;
+        colors.marker_b = props.palette_b;
+        colors.marker_a = props.palette_a;
+    } else {
+        colors.marker_r = resolved_style.palette_marker_r;
+        colors.marker_g = resolved_style.palette_marker_g;
+        colors.marker_b = resolved_style.palette_marker_b;
+        colors.marker_a = resolved_style.palette_marker_a;
+    }
+
+    colors.fill_r = resolved_style.palette_fill_r;
+    colors.fill_g = resolved_style.palette_fill_g;
+    colors.fill_b = resolved_style.palette_fill_b;
+    colors.fill_a = resolved_style.palette_fill_a;
+
+    return colors;
+}
+
+static std::vector<reactcpp::LinePoint> resolve_line_points(const LineChartProps& props) {
+    if (props.points_source) {
+        return props.points_source->snapshot();
+    }
+    if (!props.points.empty()) {
+        return props.points;
+    }
+    if (!props.x.empty() && !props.y.empty()) {
+        const std::size_t n = std::min(props.x.size(), props.y.size());
+        std::vector<reactcpp::LinePoint> out;
+        out.reserve(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            out.push_back(reactcpp::LinePoint{props.x[i], props.y[i]});
+        }
+        return out;
+    }
+    return {};
+}
+
+static std::vector<double> resolve_series(
+    const std::vector<double>& static_data,
+    const std::shared_ptr<const reactcpp::VectorDataSource<double>>& source
+) {
+    if (source) {
+        return source->snapshot();
+    }
+    return static_data;
+}
+
+static void sanitize_range(double& lo, double& hi) {
+    if (!is_finite_double(lo) || !is_finite_double(hi)) {
+        lo = 0.0;
+        hi = 1.0;
+        return;
+    }
+    if (hi < lo) {
+        std::swap(lo, hi);
+    }
+    if (lo == hi) {
+        lo -= 0.5;
+        hi += 0.5;
+        if (lo == hi) {
+            lo -= 0.5;
+            hi += 0.5;
+        }
+    }
+}
+
+static void grow_range_from_double(double v, double& lo, double& hi, bool& init) {
+    if (!is_finite_double(v)) {
+        return;
+    }
+    if (!init) {
+        lo = hi = v;
+        init = true;
+        return;
+    }
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+}
+
+static void draw_chart_background(SkCanvas* canvas, const LayoutRect& r, const ViewProps& view_props) {
+    const SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
+    SkPaint fill;
+    fill.setAntiAlias(true);
+    fill.setColor(make_color(view_props.bg_r, view_props.bg_g, view_props.bg_b, view_props.bg_a));
+    canvas->drawRect(bounds, fill);
+}
+
+static void draw_grid_lines(
+    SkCanvas* canvas,
+    const DrawContext& ctx,
+    const LayoutRect& host,
+    float left,
+    float top,
+    float width,
+    float height,
+    double x_min,
+    double x_max,
+    double y_min,
+    double y_max,
+    const ChartStyle& style_in
+) {
+    if (width <= 0.0f || height <= 0.0f) return;
+    if (host.width <= 0.0f || host.height <= 0.0f) return;
+
+    const ChartStyle style = resolve_chart_style(style_in);
+
+    const float sx = width / static_cast<float>(x_max - x_min);
+    const float sy = height / static_cast<float>(y_max - y_min);
+
+    const auto map_x = [&](double x) -> float {
+        return left + static_cast<float>(x - x_min) * sx;
+    };
+    const auto map_y = [&](double y) -> float {
+        return top + height - static_cast<float>(y - y_min) * sy;
+    };
+
+    const float axis_x = (0.0 >= x_min && 0.0 <= x_max)
+        ? map_x(0.0)
+        : left;
+    const float axis_y = (0.0 >= y_min && 0.0 <= y_max)
+        ? map_y(0.0)
+        : top + height;
+
+    const bool show_grid = style.draw_grid;
+    const ChartGrid grid_mode = style.grid_mode;
+
+    const SkColor axis_color = make_color(style.axis_r, style.axis_g, style.axis_b, style.axis_a);
+    const SkColor grid_color = make_color(style.grid_r, style.grid_g, style.grid_b, style.grid_a);
+    const SkColor tick_label_color = make_color(style.tick_label_r, style.tick_label_g, style.tick_label_b, style.tick_label_a);
+    const SkColor title_color = make_color(style.title_r, style.title_g, style.title_b, style.title_a);
+    const SkColor axis_label_color = make_color(style.axis_label_r, style.axis_label_g, style.axis_label_b, style.axis_label_a);
+
+    if (style.draw_axes) {
+        SkPaint axis;
+        axis.setColor(axis_color);
+        axis.setStyle(SkPaint::kStroke_Style);
+        axis.setStrokeWidth(std::max(0.5f, style.axis_width));
+        axis.setAntiAlias(true);
+        canvas->drawLine(left, axis_y, left + width, axis_y, axis);
+        canvas->drawLine(axis_x, top, axis_x, top + height, axis);
+    }
+
+    if (show_grid && grid_mode != ChartGrid::None) {
+        SkPaint grid;
+        grid.setColor(grid_color);
+        grid.setStyle(SkPaint::kStroke_Style);
+        grid.setStrokeWidth(std::max(0.4f, style.grid_width));
+        grid.setAntiAlias(true);
+        if (style.grid_dashed) {
+            grid.setPathEffect(SkDashPathEffect::Make({4.0f, 3.0f}, 0));
+        }
+
+        const int ticks = std::max(2, style.tick_count);
+        if (grid_mode == ChartGrid::Vertical || grid_mode == ChartGrid::Both) {
+            for (int i = 0; i <= ticks; ++i) {
+                const float t = static_cast<float>(i) / static_cast<float>(ticks);
+                const float gx = left + width * t;
+                canvas->drawLine(gx, top, gx, top + height, grid);
+            }
+        }
+        if (grid_mode == ChartGrid::Horizontal || grid_mode == ChartGrid::Both) {
+            for (int i = 0; i <= ticks; ++i) {
+                const float t = static_cast<float>(i) / static_cast<float>(ticks);
+                const float gy = top + height * t;
+                canvas->drawLine(left, gy, left + width, gy, grid);
+            }
+        }
+    }
+
+    if (style.show_tick_labels) {
+        SkFont tick_font;
+        tick_font.setSize(std::max(8.0f, style.tick_label_size));
+        tick_font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkPaint tick_paint;
+        tick_paint.setAntiAlias(true);
+        tick_paint.setColor(tick_label_color);
+
+        const int ticks = std::max(2, style.tick_count);
+        for (int i = 0; i <= ticks; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(ticks);
+            const double xv = x_min + (x_max - x_min) * static_cast<double>(t);
+            const double yv = y_min + (y_max - y_min) * static_cast<double>(t);
+            const float gx = left + width * t;
+            const float gy = top + height * t;
+
+            if (grid_mode == ChartGrid::Vertical || grid_mode == ChartGrid::Both) {
+                const std::string label = format_chart_tick_label(xv);
+                const float tw = tick_font.measureText(label.c_str(), label.size(), SkTextEncoding::kUTF8);
+                const float lx = gx - tw * 0.5f;
+                const float ly = top + height + tick_font.getSize() + 4.0f;
+                canvas->drawString(label.c_str(), std::max(0.0f, lx), ly, tick_font, tick_paint);
+            }
+
+            if (grid_mode == ChartGrid::Horizontal || grid_mode == ChartGrid::Both) {
+                const std::string label = format_chart_tick_label(yv);
+                const float tw = tick_font.measureText(label.c_str(), label.size(), SkTextEncoding::kUTF8);
+                const float ly = gy + tick_font.getSize() * 0.35f;
+                const float lx = std::max(0.0f, left - 4.0f - tw);
+                canvas->drawString(label.c_str(), lx, ly, tick_font, tick_paint);
+            }
+        }
+    }
+
+    if (style.show_title && !style.title.empty()) {
+        SkFont title_font;
+        title_font.setSize(std::max(12.0f, style.title_size));
+        title_font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkPaint title_paint;
+        title_paint.setAntiAlias(true);
+        title_paint.setColor(title_color);
+
+        const float title_w = title_font.measureText(style.title.c_str(), style.title.size(), SkTextEncoding::kUTF8);
+        const float tx = host.x + (host.width - title_w) * 0.5f;
+        canvas->drawString(style.title.c_str(), std::max(0.0f, tx), title_font.getSize(), title_font, title_paint);
+    }
+
+    if (style.show_axis_labels) {
+        SkFont axis_font;
+        axis_font.setSize(std::max(10.0f, style.axis_label_size));
+        axis_font.setTypeface(pick_typeface(ctx.font_mgr));
+
+        SkPaint axis_paint;
+        axis_paint.setAntiAlias(true);
+        axis_paint.setColor(axis_label_color);
+
+        if (!style.x_label.empty()) {
+            const float label_w = axis_font.measureText(style.x_label.c_str(), style.x_label.size(), SkTextEncoding::kUTF8);
+            const float lx = host.x + (host.width - label_w) * 0.5f;
+            const float ly = top + height + axis_font.getSize() * 1.75f + (style.show_tick_labels ? style.tick_label_size : 0.0f);
+            canvas->drawString(style.x_label.c_str(), std::max(0.0f, lx), ly, axis_font, axis_paint);
+        }
+
+        if (!style.y_label.empty()) {
+            const float lx = std::max(0.0f, host.x + 4.0f);
+            const float ly = top + height * 0.5f;
+            const float label_w = axis_font.measureText(style.y_label.c_str(), style.y_label.size(), SkTextEncoding::kUTF8);
+            canvas->save();
+            canvas->translate(lx, ly + label_w * 0.5f);
+            canvas->rotate(-90.0f);
+            canvas->drawString(style.y_label.c_str(), 0.0f, 0.0f, axis_font, axis_paint);
+            canvas->restore();
+        }
+    }
+}
+
+static void draw_marker(
+    SkCanvas* canvas,
+    float x,
+    float y,
+    ChartMarker kind,
+    float size,
+    SkColor fill_color
+) {
+    if (size <= 0.001f) return;
+    const float half = std::max(0.2f, size * 0.5f);
+    if (kind == ChartMarker::Square) {
+        SkRect rr = SkRect::MakeLTRB(x - half, y - half, x + half, y + half);
+        SkPaint p;
+        p.setAntiAlias(true);
+        p.setStyle(SkPaint::kFill_Style);
+        p.setColor(fill_color);
+        canvas->drawRect(rr, p);
+    } else if (kind == ChartMarker::Triangle) {
+        const SkPoint tri_points[3] = {
+            SkPoint::Make(x, y - half),
+            SkPoint::Make(x + half, y + half),
+            SkPoint::Make(x - half, y + half),
+        };
+        const SkPath tri_path = SkPath::Polygon(tri_points, true);
+        SkPaint p;
+        p.setAntiAlias(true);
+        p.setStyle(SkPaint::kFill_Style);
+        p.setColor(fill_color);
+        canvas->drawPath(tri_path, p);
+    } else {
+        SkPaint p;
+        p.setAntiAlias(true);
+        p.setStyle(SkPaint::kFill_Style);
+        p.setColor(fill_color);
+        canvas->drawCircle(x, y, half, p);
+    }
+}
+
+static std::vector<double> histogram_compute_edges(
+    const std::vector<double>& samples,
+    std::size_t fixed_bin_count,
+    HistogramAlgorithm algorithm
+) {
+    std::vector<double> finite;
+    finite.reserve(samples.size());
+    for (double v : samples) {
+        if (is_finite_double(v)) finite.push_back(v);
+    }
+    if (finite.empty()) return {};
+
+    std::sort(finite.begin(), finite.end());
+    finite.erase(std::unique(finite.begin(), finite.end()), finite.end());
+    if (finite.empty()) return {};
+
+    double lo = finite.front();
+    double hi = finite.back();
+
+    if (lo == hi) {
+        const double start = std::floor(lo) - 0.5;
+        return {start, start + 1.0};
+    }
+
+    auto select_algorithm = algorithm;
+    if (algorithm == HistogramAlgorithm::Automatic) {
+        bool integer_like = true;
+        for (double v : finite) {
+            if (!is_finite_double(v) || std::fabs(v - std::round(v)) > 1e-6) {
+                integer_like = false;
+                break;
+            }
+        }
+        select_algorithm = integer_like ? HistogramAlgorithm::Integers : HistogramAlgorithm::Scott;
+    }
+
+    std::size_t bins = 10;
+    if (fixed_bin_count > 0) {
+        bins = std::max<std::size_t>(1, fixed_bin_count);
+    } else {
+        const std::size_t n = finite.size();
+        switch (select_algorithm) {
+        case HistogramAlgorithm::Scott: {
+            double sum = 0.0;
+            for (double v : samples) sum += v;
+            const double mean = sum / static_cast<double>(samples.size());
+            double m2 = 0.0;
+            for (double v : samples) {
+                const double d = v - mean;
+                m2 += d * d;
+            }
+            const double stddev = std::sqrt(m2 / std::max<std::size_t>(1, samples.size()));
+            double width = (stddev > 0.0) ? 3.5 * stddev / std::pow(samples.size(), 1.0 / 3.0) : 0.0;
+            bins = width > 0.0 ? static_cast<std::size_t>(std::ceil((hi - lo) / width)) : 10;
+            break;
+        }
+        case HistogramAlgorithm::FD: {
+            auto q = [&](double p) {
+                if (finite.empty()) return 0.0;
+                const double scaled = p * (static_cast<double>(finite.size() - 1));
+                const std::size_t i0 = static_cast<std::size_t>(std::floor(scaled));
+                const std::size_t i1 = std::min(i0 + 1, finite.size() - 1);
+                const double t = scaled - static_cast<double>(i0);
+                return finite[i0] + (finite[i1] - finite[i0]) * t;
+            };
+            const double q25 = q(0.25);
+            const double q75 = q(0.75);
+            const double iqr = q75 - q25;
+            const double width = iqr > 0.0 ? 2.0 * iqr / std::pow(samples.size(), 1.0 / 3.0) : 0.0;
+            bins = width > 0.0 ? static_cast<std::size_t>(std::ceil((hi - lo) / width)) : 10;
+            break;
+        }
+        case HistogramAlgorithm::Sturges:
+            bins = static_cast<std::size_t>(std::ceil(std::log2(std::max<std::size_t>(1, finite.size()))) + 1);
+            break;
+        case HistogramAlgorithm::Sqrt:
+            bins = static_cast<std::size_t>(std::ceil(std::sqrt(std::max<std::size_t>(1, finite.size()))));
+            break;
+        case HistogramAlgorithm::Integers: {
+            const double start = std::floor(lo);
+            const double end = std::ceil(hi);
+            bins = static_cast<std::size_t>(std::max(1.0, end - start));
+            lo = start;
+            hi = end;
+            break;
+        }
+        case HistogramAlgorithm::Automatic:
+            bins = 10;
+            break;
+        }
+    }
+
+    bins = std::max<std::size_t>(1, bins);
+
+    if (select_algorithm == HistogramAlgorithm::Integers) {
+        std::vector<double> edges;
+        edges.reserve(static_cast<std::size_t>(bins) + 1);
+        const double start = std::floor(lo);
+        for (std::size_t i = 0; i <= bins; ++i) {
+            edges.push_back(start + static_cast<double>(i));
+        }
+        if (edges.front() > lo) edges.front() = lo;
+        if (edges.back() < hi) edges.back() = hi;
+        if (edges.size() >= 2) return edges;
+    }
+
+    const double span = hi - lo;
+    const double width = span / static_cast<double>(bins);
+    std::vector<double> edges;
+    edges.reserve(bins + 1);
+    for (std::size_t i = 0; i <= bins; ++i) {
+        edges.push_back(lo + width * static_cast<double>(i));
+    }
+    edges.front() = std::min(edges.front(), lo);
+    edges.back() = std::max(edges.back(), hi);
+    return edges;
+}
+
+static std::vector<double> histogram_counts(const std::vector<double>& samples, const std::vector<double>& edges) {
+    if (edges.size() < 2) return {};
+    std::vector<double> counts(std::max<std::size_t>(1, edges.size() - 1), 0.0);
+    if (samples.empty()) return counts;
+    for (double s : samples) {
+        if (!is_finite_double(s)) continue;
+        auto it = std::upper_bound(edges.begin(), edges.end(), s);
+        if (it == edges.begin()) {
+            continue;
+        }
+        if (it == edges.end()) {
+            if (s == edges.back()) {
+                counts.back() += 1.0;
+            }
+            continue;
+        }
+        const std::size_t i = static_cast<std::size_t>(it - edges.begin()) - 1;
+        if (i < counts.size()) counts[i] += 1.0;
+    }
+    return counts;
+}
+
+static std::vector<double> histogram_normalize(
+    const std::vector<double>& counts,
+    const std::vector<double>& edges,
+    HistogramNormalization norm
+) {
+    if (counts.empty()) return {};
+    std::vector<double> out(counts.size(), 0.0);
+    double total = 0.0;
+    for (double c : counts) total += c;
+    if (total <= 0.0) return out;
+
+    if (norm == HistogramNormalization::Count) {
+        return counts;
+    }
+
+    if (norm == HistogramNormalization::CDF) {
+        double acc = 0.0;
+        for (std::size_t i = 0; i < counts.size(); ++i) {
+            acc += counts[i];
+            out[i] = acc / total;
+        }
+        return out;
+    }
+
+    if (norm == HistogramNormalization::Probability) {
+        for (std::size_t i = 0; i < counts.size(); ++i) {
+            out[i] = counts[i] / total;
+        }
+        return out;
+    }
+
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        const double width = std::max(1e-12, edges[i + 1] - edges[i]);
+        out[i] = counts[i] / (total * width);
+    }
+    return out;
+}
 static SDL_DisplayID pick_primary_display_id() {
     SDL_DisplayID primary = SDL_GetPrimaryDisplay();
     if (primary != 0) return primary;
@@ -144,14 +765,6 @@ static void log_gl_to_cpu_fallback(const std::string& reason) {
         driver ? driver : "(unknown)"
     );
 }
-
-struct DrawContext {
-    int surface_width{0};
-    int surface_height{0};
-    sk_sp<SkFontMgr> font_mgr;
-};
-
-thread_local sk_sp<SkFontMgr> g_font_mgr;
 
 struct FontconfigFontMatch {
     std::string file;
@@ -280,6 +893,17 @@ static SkColor make_color(float r, float g, float b, float a = 1.0f) {
         return static_cast<U8CPU>(clamped * 255.0f);
     };
     return SkColorSetARGB(to_u8(a), to_u8(r), to_u8(g), to_u8(b));
+}
+
+static void draw_chart_empty_message(SkCanvas* canvas, const DrawContext& ctx, const LayoutRect& plot, const char* text) {
+    SkFont font;
+    font.setSize(14.0f);
+    font.setTypeface(pick_typeface(ctx.font_mgr));
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor(static_cast<SkColor>(0xFF6B7280));
+    canvas->drawString(text, 12.0f, 24.0f, font, paint);
+    (void)plot;
 }
 
 static SkScalar baseline_for_centered_text(const SkFont& font, SkScalar box_height) {
@@ -964,6 +1588,690 @@ private:
     }
 };
 
+class LineChartRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<LineChartProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+        draw_chart_background(canvas, r, props);
+        if (r.width <= 1.0f || r.height <= 1.0f) return;
+
+        const auto points = resolve_line_points(props);
+        if (points.size() < 2) {
+            draw_chart_empty_message(canvas, ctx, r, "LineChart: require at least two valid points");
+            return;
+        }
+
+        double x_min = props.x_min;
+        double x_max = props.x_max;
+        double y_min = props.y_min;
+        double y_max = props.y_max;
+        if (props.auto_x_range || props.auto_y_range) {
+            bool init_x = false;
+            bool init_y = false;
+            for (const auto& p : points) {
+                grow_range_from_double(p.x, x_min, x_max, init_x);
+                grow_range_from_double(p.y, y_min, y_max, init_y);
+            }
+
+            if (props.auto_x_range && !init_x) {
+                x_min = 0.0;
+                x_max = 1.0;
+            } else if (props.auto_x_range) {
+                sanitize_range(x_min, x_max);
+            }
+            if (props.auto_y_range && !init_y) {
+                y_min = 0.0;
+                y_max = 1.0;
+            } else if (props.auto_y_range) {
+                sanitize_range(y_min, y_max);
+            }
+        } else {
+            sanitize_range(x_min, x_max);
+            sanitize_range(y_min, y_max);
+        }
+
+        const float plot_x = props.left_padding;
+        const float plot_y = props.top_padding;
+        const float plot_w = std::max(1.0f, r.width - props.left_padding - props.right_padding);
+        const float plot_h = std::max(1.0f, r.height - props.top_padding - props.bottom_padding);
+        if (plot_w <= 1.0f || plot_h <= 1.0f) return;
+
+        auto style = resolve_chart_style(props.chart_style);
+        const auto colors = resolve_line_colors(props, style);
+        style.draw_axes = props.draw_axes;
+        style.draw_grid = props.draw_grid;
+        style.grid_mode = props.draw_grid ? props.grid_mode : ChartGrid::None;
+
+        draw_grid_lines(
+            canvas,
+            ctx,
+            r,
+            plot_x,
+            plot_y,
+            plot_w,
+            plot_h,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            style
+        );
+
+        const float sx = plot_w / static_cast<float>(x_max - x_min);
+        const float sy = plot_h / static_cast<float>(y_max - y_min);
+        const auto map_x = [&](double x) -> float { return plot_x + static_cast<float>(x - x_min) * sx; };
+        const auto map_y = [&](double y) -> float { return plot_y + plot_h - static_cast<float>(y - y_min) * sy; };
+
+        if (props.fill_area) {
+            const double baseline = (0.0 >= y_min && 0.0 <= y_max) ? 0.0 : y_min;
+            const float base_y = map_y(baseline);
+            std::vector<SkPoint> area_points;
+            area_points.reserve(points.size() + 2);
+            area_points.push_back(SkPoint::Make(map_x(points.front().x), base_y));
+            for (const auto& p : points) {
+                area_points.push_back(SkPoint::Make(map_x(p.x), map_y(p.y)));
+            }
+            area_points.push_back(SkPoint::Make(map_x(points.back().x), base_y));
+            const SkPath area_path = SkPath::Polygon(area_points, true);
+            SkPaint fill;
+            fill.setColor(make_color(colors.fill_r, colors.fill_g, colors.fill_b, colors.fill_a));
+            fill.setStyle(SkPaint::kFill_Style);
+            fill.setAntiAlias(true);
+            canvas->drawPath(area_path, fill);
+        }
+
+        if (props.draw_line && points.size() >= 2) {
+            SkPaint stroke;
+            stroke.setColor(make_color(props.line_r, props.line_g, props.line_b, props.line_a));
+            stroke.setStyle(SkPaint::kStroke_Style);
+            stroke.setStrokeWidth(std::max(0.5f, static_cast<float>(props.line_width)));
+            stroke.setAntiAlias(true);
+            for (std::size_t i = 1; i < points.size(); ++i) {
+                const auto& p0 = points[i - 1];
+                const auto& p1 = points[i];
+                canvas->drawLine(
+                    map_x(p0.x), map_y(p0.y),
+                    map_x(p1.x), map_y(p1.y),
+                    stroke
+                );
+            }
+        }
+
+        if (props.show_markers) {
+            const SkColor mcolor = make_color(colors.marker_r, colors.marker_g, colors.marker_b, colors.marker_a);
+            for (const auto& p : points) {
+                draw_marker(canvas, map_x(p.x), map_y(p.y), ChartMarker::Circle, static_cast<float>(props.marker_size), mcolor);
+            }
+        }
+    }
+};
+
+class ScatterChartRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<ScatterChartProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+        draw_chart_background(canvas, r, props);
+        if (r.width <= 1.0f || r.height <= 1.0f) return;
+
+        const auto points = resolve_line_points(props);
+        if (points.empty()) {
+            draw_chart_empty_message(canvas, ctx, r, "ScatterChart: empty data");
+            return;
+        }
+
+        double x_min = props.x_min;
+        double x_max = props.x_max;
+        double y_min = props.y_min;
+        double y_max = props.y_max;
+        bool init_x = false;
+        bool init_y = false;
+        for (const auto& p : points) {
+            grow_range_from_double(p.x, x_min, x_max, init_x);
+            grow_range_from_double(p.y, y_min, y_max, init_y);
+        }
+        if (props.auto_x_range) {
+            if (!init_x) {
+                x_min = 0.0;
+                x_max = 1.0;
+            } else sanitize_range(x_min, x_max);
+        } else {
+            sanitize_range(x_min, x_max);
+        }
+        if (props.auto_y_range) {
+            if (!init_y) {
+                y_min = 0.0;
+                y_max = 1.0;
+            } else sanitize_range(y_min, y_max);
+        } else {
+            sanitize_range(y_min, y_max);
+        }
+
+        const float plot_x = props.left_padding;
+        const float plot_y = props.top_padding;
+        const float plot_w = std::max(1.0f, r.width - props.left_padding - props.right_padding);
+        const float plot_h = std::max(1.0f, r.height - props.top_padding - props.bottom_padding);
+        if (plot_w <= 1.0f || plot_h <= 1.0f) return;
+
+        auto style = resolve_chart_style(props.chart_style);
+        const auto colors = resolve_line_colors(props, style);
+        style.draw_axes = props.draw_axes;
+        style.draw_grid = props.draw_grid;
+        style.grid_mode = props.draw_grid ? props.grid_mode : ChartGrid::None;
+
+        draw_grid_lines(
+            canvas,
+            ctx,
+            r,
+            plot_x,
+            plot_y,
+            plot_w,
+            plot_h,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            style
+        );
+
+        const float sx = plot_w / static_cast<float>(x_max - x_min);
+        const float sy = plot_h / static_cast<float>(y_max - y_min);
+        const auto map_x = [&](double x) -> float { return plot_x + static_cast<float>(x - x_min) * sx; };
+        const auto map_y = [&](double y) -> float { return plot_y + plot_h - static_cast<float>(y - y_min) * sy; };
+
+        const SkColor mcolor = make_color(props.point_r, props.point_g, props.point_b, props.point_a);
+        for (const auto& p : points) {
+            draw_marker(canvas, map_x(p.x), map_y(p.y), props.marker_kind, static_cast<float>(props.marker_size), mcolor);
+        }
+    }
+};
+
+class AreaChartRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<AreaChartProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+        draw_chart_background(canvas, r, props);
+        if (r.width <= 1.0f || r.height <= 1.0f) return;
+
+        const auto points = resolve_line_points(props);
+        if (points.empty()) {
+            draw_chart_empty_message(canvas, ctx, r, "AreaChart: empty data");
+            return;
+        }
+
+        std::vector<double> base_y(points.size(), 0.0);
+        for (std::size_t i = 0; i < points.size() && i < props.base.size(); ++i) {
+            base_y[i] = props.base[i];
+        }
+
+        double x_min = props.x_min;
+        double x_max = props.x_max;
+        double y_min = props.y_min;
+        double y_max = props.y_max;
+        bool init_x = false;
+        bool init_y = false;
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            grow_range_from_double(points[i].x, x_min, x_max, init_x);
+            grow_range_from_double(points[i].y, y_min, y_max, init_y);
+            grow_range_from_double(base_y[i], y_min, y_max, init_y);
+        }
+        if (props.auto_x_range) {
+            if (!init_x) {
+                x_min = 0.0;
+                x_max = 1.0;
+            } else sanitize_range(x_min, x_max);
+        } else {
+            sanitize_range(x_min, x_max);
+        }
+        if (props.auto_y_range) {
+            if (!init_y) {
+                y_min = 0.0;
+                y_max = 1.0;
+            } else sanitize_range(y_min, y_max);
+        } else {
+            sanitize_range(y_min, y_max);
+        }
+
+        const float plot_x = props.left_padding;
+        const float plot_y = props.top_padding;
+        const float plot_w = std::max(1.0f, r.width - props.left_padding - props.right_padding);
+        const float plot_h = std::max(1.0f, r.height - props.top_padding - props.bottom_padding);
+        if (plot_w <= 1.0f || plot_h <= 1.0f) return;
+
+        auto style = resolve_chart_style(props.chart_style);
+        style.draw_axes = props.draw_axes;
+        style.draw_grid = props.draw_grid;
+        style.grid_mode = props.draw_grid ? props.grid_mode : ChartGrid::None;
+
+        draw_grid_lines(
+            canvas,
+            ctx,
+            r,
+            plot_x,
+            plot_y,
+            plot_w,
+            plot_h,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            style
+        );
+
+        const float sx = plot_w / static_cast<float>(x_max - x_min);
+        const float sy = plot_h / static_cast<float>(y_max - y_min);
+        const auto map_x = [&](double x) -> float { return plot_x + static_cast<float>(x - x_min) * sx; };
+        const auto map_y = [&](double y) -> float { return plot_y + plot_h - static_cast<float>(y - y_min) * sy; };
+
+        std::vector<SkPoint> area_points;
+        area_points.reserve(points.size() * 2 + 2);
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            area_points.push_back(SkPoint::Make(map_x(points[i].x), map_y(points[i].y)));
+        }
+        for (std::size_t i = points.size(); i > 0; --i) {
+            const std::size_t j = i - 1;
+            area_points.push_back(SkPoint::Make(map_x(points[j].x), map_y(base_y[j])));
+        }
+        const SkPath area_path = SkPath::Polygon(area_points, true);
+
+        SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setStyle(SkPaint::kFill_Style);
+        fill.setColor(make_color(props.fill_r, props.fill_g, props.fill_b, props.fill_a));
+        canvas->drawPath(area_path, fill);
+
+        if (points.size() >= 2) {
+            SkPaint stroke;
+            stroke.setAntiAlias(true);
+            stroke.setStyle(SkPaint::kStroke_Style);
+            stroke.setStrokeWidth(std::max(0.5f, static_cast<float>(props.line_width)));
+            stroke.setColor(make_color(props.line_r, props.line_g, props.line_b, props.line_a));
+
+            for (std::size_t i = 1; i < points.size(); ++i) {
+                canvas->drawLine(
+                    map_x(points[i - 1].x), map_y(points[i - 1].y),
+                    map_x(points[i].x), map_y(points[i].y),
+                    stroke
+                );
+            }
+        }
+
+        if (props.show_base_line && points.size() >= 2) {
+            SkPaint base;
+            base.setAntiAlias(true);
+            base.setStyle(SkPaint::kStroke_Style);
+            base.setStrokeWidth(1.0f);
+            base.setColor(make_color(props.line_r, props.line_g, props.line_b, 0.75f));
+            for (std::size_t i = 1; i < points.size(); ++i) {
+                canvas->drawLine(
+                    map_x(points[i - 1].x), map_y(base_y[i - 1]),
+                    map_x(points[i].x), map_y(base_y[i]),
+                    base
+                );
+            }
+        }
+    }
+};
+
+class BarChartRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<BarChartProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+        draw_chart_background(canvas, r, props);
+        if (r.width <= 1.0f || r.height <= 1.0f) return;
+
+        std::vector<double> values = resolve_series(props.values, props.values_source);
+        if (values.empty()) {
+            draw_chart_empty_message(canvas, ctx, r, "BarChart: empty data");
+            return;
+        }
+
+        std::vector<double> x = props.x_source ? props.x_source->snapshot() : props.x;
+        if (x.empty()) {
+            x.resize(values.size());
+            for (std::size_t i = 0; i < x.size(); ++i) x[i] = static_cast<double>(i);
+        }
+        if (x.size() > values.size()) {
+            x.resize(values.size());
+        } else if (x.size() < values.size()) {
+            values.resize(x.size());
+        }
+        if (values.empty()) {
+            draw_chart_empty_message(canvas, ctx, r, "BarChart: no paired x / y values");
+            return;
+        }
+
+        double x_min = props.x_min;
+        double x_max = props.x_max;
+        double y_min = props.y_min;
+        double y_max = props.y_max;
+
+        bool init_x = false;
+        bool init_y = false;
+        for (double v : x) {
+            grow_range_from_double(v, x_min, x_max, init_x);
+        }
+        for (double v : values) {
+            grow_range_from_double(v, y_min, y_max, init_y);
+        }
+
+        if (props.auto_x_range) {
+            if (!init_x) {
+                x_min = 0.0;
+                x_max = 1.0;
+            } else sanitize_range(x_min, x_max);
+        } else {
+            sanitize_range(x_min, x_max);
+        }
+        if (props.auto_y_range) {
+            if (!init_y) {
+                y_min = 0.0;
+                y_max = 1.0;
+            } else sanitize_range(y_min, y_max);
+        } else {
+            sanitize_range(y_min, y_max);
+        }
+
+        const float plot_x = 12.0f;
+        const float plot_y = 12.0f;
+        const float plot_w = std::max(1.0f, r.width - 24.0f);
+        const float plot_h = std::max(1.0f, r.height - 24.0f);
+        if (plot_w <= 1.0f || plot_h <= 1.0f) return;
+
+        {
+            auto style = resolve_chart_style(props.chart_style);
+            style.draw_axes = props.draw_axes;
+            style.draw_grid = props.draw_grid;
+            style.grid_mode = props.draw_grid ? ChartGrid::Both : ChartGrid::None;
+            draw_grid_lines(
+                canvas,
+                ctx,
+                r,
+                plot_x,
+                plot_y,
+                plot_w,
+                plot_h,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                style
+            );
+        }
+
+        const float sx = plot_w / static_cast<float>(x_max - x_min);
+        const float sy = plot_h / static_cast<float>(y_max - y_min);
+        const auto map_x = [&](double v) -> float { return plot_x + static_cast<float>(v - x_min) * sx; };
+        const auto map_y = [&](double v) -> float { return plot_y + plot_h - static_cast<float>(v - y_min) * sy; };
+
+        double min_step = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 1; i < x.size(); ++i) {
+            const double d = std::fabs(x[i] - x[i - 1]);
+            if (d > 0.0 && d < min_step) min_step = d;
+        }
+        if (!is_finite_double(min_step) || min_step <= 0.0) min_step = 1.0;
+        const float width_ratio = std::max(0.05f, static_cast<float>(props.bar_width - props.bar_gap));
+        const float max_bar_w = std::fabs(plot_w / static_cast<float>(std::max<std::size_t>(1, x.size())));
+        float bar_w = static_cast<float>(min_step) * width_ratio;
+        bar_w = std::clamp(bar_w, 0.8f, max_bar_w);
+
+        const double baseline = (0.0 >= y_min && 0.0 <= y_max) ? 0.0 : y_min;
+        const float base_y = map_y(baseline);
+
+        SkPaint fill;
+        fill.setAntiAlias(true);
+        fill.setStyle(SkPaint::kFill_Style);
+        fill.setColor(make_color(props.fill_r, props.fill_g, props.fill_b, props.fill_a));
+
+        SkPaint stroke;
+        stroke.setAntiAlias(true);
+        stroke.setStyle(SkPaint::kStroke_Style);
+        stroke.setStrokeWidth(std::max(0.5f, static_cast<float>(props.stroke_width)));
+        stroke.setColor(make_color(props.stroke_r, props.stroke_g, props.stroke_b, props.stroke_a));
+
+        for (std::size_t i = 0; i < values.size() && i < x.size(); ++i) {
+            const float cx = map_x(x[i]);
+            const float left = cx - bar_w * 0.5f;
+            const float right = cx + bar_w * 0.5f;
+            const float top = map_y(values[i]);
+            const SkRect rect = make_safe_rect(left, std::min(base_y, top), right - left, std::fabs(base_y - top));
+            canvas->drawRect(rect, fill);
+            canvas->drawRect(rect, stroke);
+        }
+    }
+};
+
+class CircleChartRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<CircleChartProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+        draw_chart_background(canvas, r, props);
+        if (r.width <= 1.0f || r.height <= 1.0f) return;
+
+        std::vector<double> x = resolve_series(props.x, props.x_source);
+        std::vector<double> y = resolve_series(props.y, props.y_source);
+        std::vector<double> rad = resolve_series(props.radius, props.radius_source);
+
+        const std::size_t n = std::min({x.size(), y.size(), rad.empty() ? y.size() : rad.size()});
+        if (x.empty() || y.empty() || n == 0) {
+            draw_chart_empty_message(canvas, ctx, r, "CircleChart: need x/y data");
+            return;
+        }
+
+        if (x.size() < n) x.resize(n, 0.0);
+        if (y.size() < n) y.resize(n, 0.0);
+        if (rad.empty()) {
+            rad.assign(n, 3.0);
+        } else if (rad.size() < n) {
+            rad.resize(n, rad.back());
+        }
+
+        double x_min = props.x_min;
+        double x_max = props.x_max;
+        double y_min = props.y_min;
+        double y_max = props.y_max;
+        bool init_x = false;
+        bool init_y = false;
+        for (std::size_t i = 0; i < n; ++i) {
+            grow_range_from_double(x[i], x_min, x_max, init_x);
+            grow_range_from_double(y[i], y_min, y_max, init_y);
+        }
+        if (props.auto_range) {
+            if (!init_x) {
+                x_min = 0.0;
+                x_max = 1.0;
+            } else sanitize_range(x_min, x_max);
+            if (!init_y) {
+                y_min = 0.0;
+                y_max = 1.0;
+            } else sanitize_range(y_min, y_max);
+        } else {
+            sanitize_range(x_min, x_max);
+            sanitize_range(y_min, y_max);
+        }
+
+        const float plot_x = props.left_padding;
+        const float plot_y = props.top_padding;
+        const float plot_w = std::max(1.0f, r.width - props.left_padding - props.right_padding);
+        const float plot_h = std::max(1.0f, r.height - props.top_padding - props.bottom_padding);
+        if (plot_w <= 1.0f || plot_h <= 1.0f) return;
+
+        {
+            auto style = resolve_chart_style(props.chart_style);
+            style.draw_axes = props.draw_axes;
+            style.draw_grid = props.draw_grid;
+            style.grid_mode = props.draw_grid ? ChartGrid::Both : ChartGrid::None;
+            draw_grid_lines(
+                canvas,
+                ctx,
+                r,
+                plot_x,
+                plot_y,
+                plot_w,
+                plot_h,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                style
+            );
+        }
+
+        const float sx = plot_w / static_cast<float>(x_max - x_min);
+        const float sy = plot_h / static_cast<float>(y_max - y_min);
+        const auto map_x = [&](double v) -> float { return plot_x + static_cast<float>(v - x_min) * sx; };
+        const auto map_y = [&](double v) -> float { return plot_y + plot_h - static_cast<float>(v - y_min) * sy; };
+
+        const SkColor fill = make_color(props.fill_r, props.fill_g, props.fill_b, props.fill_a);
+        const SkColor stroke = make_color(props.stroke_r, props.stroke_g, props.stroke_b, props.stroke_a);
+        const SkPaint f;
+        const SkPaint s;
+        for (std::size_t i = 0; i < n; ++i) {
+            const float cx = map_x(x[i]);
+            const float cy = map_y(y[i]);
+            const float cr = clamp_f(static_cast<float>(std::max(0.0, rad[i])), 0.5f, 80.0f);
+            SkPaint paint_fill;
+            paint_fill.setAntiAlias(true);
+            paint_fill.setColor(fill);
+            paint_fill.setStyle(SkPaint::kFill_Style);
+
+            SkPaint paint_stroke;
+            paint_stroke.setAntiAlias(true);
+            paint_stroke.setStyle(SkPaint::kStroke_Style);
+            paint_stroke.setStrokeWidth(std::max(0.5f, static_cast<float>(props.stroke_width)));
+            paint_stroke.setColor(stroke);
+
+            canvas->drawCircle(cx, cy, cr, paint_fill);
+            canvas->drawCircle(cx, cy, cr, paint_stroke);
+        }
+    }
+};
+
+class HistogramChartRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<HistogramChartProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+        draw_chart_background(canvas, r, props);
+        if (r.width <= 1.0f || r.height <= 1.0f) return;
+
+        const std::vector<double> samples = resolve_series(props.samples, props.samples_source);
+        if (samples.empty()) {
+            draw_chart_empty_message(canvas, ctx, r, "HistogramChart: empty samples");
+            return;
+        }
+
+        std::vector<double> edges = props.bin_edges;
+        if (edges.size() < 2) {
+            edges = histogram_compute_edges(samples, props.fixed_bin_count, props.algorithm);
+        }
+        if (edges.size() < 2) {
+            draw_chart_empty_message(canvas, ctx, r, "HistogramChart: invalid bins");
+            return;
+        }
+        std::sort(edges.begin(), edges.end());
+        edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+        if (edges.size() < 2) {
+            draw_chart_empty_message(canvas, ctx, r, "HistogramChart: invalid bins");
+            return;
+        }
+
+        std::vector<double> bins = histogram_counts(samples, edges);
+        std::vector<double> heights = histogram_normalize(bins, edges, props.normalization);
+
+        double x_min = props.x_min;
+        double x_max = props.x_max;
+        double y_min = props.y_min;
+        double y_max = props.y_max;
+
+        bool init_x = false;
+        bool init_y = false;
+        for (double e : edges) grow_range_from_double(e, x_min, x_max, init_x);
+        for (double h : heights) grow_range_from_double(h, y_min, y_max, init_y);
+        if (props.auto_range) {
+            if (!init_x) {
+                x_min = edges.front();
+                x_max = edges.back();
+            }
+            sanitize_range(x_min, x_max);
+            if (!init_y) {
+                y_min = 0.0;
+                y_max = 1.0;
+            } else {
+                sanitize_range(y_min, y_max);
+            }
+        } else {
+            sanitize_range(x_min, x_max);
+            sanitize_range(y_min, y_max);
+        }
+
+        const float plot_x = 12.0f;
+        const float plot_y = 12.0f;
+        const float plot_w = std::max(1.0f, r.width - 24.0f);
+        const float plot_h = std::max(1.0f, r.height - 24.0f);
+        if (plot_w <= 1.0f || plot_h <= 1.0f) return;
+
+        {
+            auto style = resolve_chart_style(props.chart_style);
+            style.draw_axes = props.draw_axes;
+            style.draw_grid = props.draw_grid;
+            style.grid_mode = props.draw_grid ? ChartGrid::Both : ChartGrid::None;
+            draw_grid_lines(
+                canvas,
+                ctx,
+                r,
+                plot_x,
+                plot_y,
+                plot_w,
+                plot_h,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                style
+            );
+        }
+
+        const float sx = plot_w / static_cast<float>(x_max - x_min);
+        const float sy = plot_h / static_cast<float>(y_max - y_min);
+        const auto map_x = [&](double v) -> float { return plot_x + static_cast<float>(v - x_min) * sx; };
+        const auto map_y = [&](double v) -> float { return plot_y + plot_h - static_cast<float>(v - y_min) * sy; };
+
+        const float base = map_y(0.0);
+        const float width_factor = clamp_f(static_cast<float>(props.bar_width_factor), 0.05f, 0.99f);
+        for (std::size_t i = 0; i < heights.size() && i + 1 < edges.size(); ++i) {
+            const float cx = static_cast<float>((edges[i] + edges[i + 1]) * 0.5);
+            const float bw = static_cast<float>(edges[i + 1] - edges[i]) * width_factor;
+            if (bw <= 0.0f) continue;
+
+            const float half = bw * static_cast<float>(sx) * 0.5f;
+            const float x0 = map_x(edges[i]);
+            const float x1 = map_x(edges[i + 1]);
+            const float left = std::min(x0, x1) + (std::fabs(x1 - x0) - half) * 0.5f;
+            const float right = std::max(x0, x1) - (std::fabs(x1 - x0) - half) * 0.5f;
+            const float top = map_y(heights[i]);
+            const SkRect bar = make_safe_rect(left, std::min(base, top), right - left, std::fabs(base - top));
+
+            SkPaint fill;
+            fill.setAntiAlias(true);
+            fill.setStyle(SkPaint::kFill_Style);
+            fill.setColor(make_color(props.fill_r, props.fill_g, props.fill_b, props.fill_a));
+            canvas->drawRect(bar, fill);
+
+            SkPaint stroke;
+            stroke.setAntiAlias(true);
+            stroke.setStyle(SkPaint::kStroke_Style);
+            stroke.setColor(make_color(props.stroke_r, props.stroke_g, props.stroke_b, props.stroke_a));
+            stroke.setStrokeWidth(std::max(0.5f, static_cast<float>(props.stroke_width)));
+            canvas->drawRect(bar, stroke);
+        }
+    }
+};
+
 class InputRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
@@ -1266,6 +2574,12 @@ static const ElementRenderer& renderer_for(TypeId type) {
     static InputRenderer input_renderer;
     static InputAreaRenderer input_area_renderer;
     static CanvasRenderer canvas_renderer;
+    static LineChartRenderer line_chart_renderer;
+    static ScatterChartRenderer scatter_chart_renderer;
+    static AreaChartRenderer area_chart_renderer;
+    static BarChartRenderer bar_chart_renderer;
+    static CircleChartRenderer circle_chart_renderer;
+    static HistogramChartRenderer histogram_chart_renderer;
 
     if (type == host_type_view()) return view_renderer;
     if (type == host_type_button()) return button_renderer;
@@ -1273,6 +2587,12 @@ static const ElementRenderer& renderer_for(TypeId type) {
     if (type == host_type_input()) return input_renderer;
     if (type == host_type_input_area()) return input_area_renderer;
     if (type == host_type_canvas()) return canvas_renderer;
+    if (type == host_type_line_chart()) return line_chart_renderer;
+    if (type == host_type_scatter_chart()) return scatter_chart_renderer;
+    if (type == host_type_area_chart()) return area_chart_renderer;
+    if (type == host_type_bar_chart()) return bar_chart_renderer;
+    if (type == host_type_circle_chart()) return circle_chart_renderer;
+    if (type == host_type_histogram_chart()) return histogram_chart_renderer;
     return view_renderer;
 }
 
@@ -1480,7 +2800,8 @@ public:
     }
 
     void perform_update_if_needed() {
-        if (!update_requested_) return;
+        const bool repaint_requested = take_runtime_repaint_request();
+        if (!update_requested_ && !repaint_requested) return;
         update_requested_ = false;
         (void)render_frame();
     }
@@ -2901,7 +4222,7 @@ private:
             return true;
         }
 
-        if (inst.current_vnode.props != vnode.props) {
+        if (!props_equal(inst.current_vnode.props, vnode.props)) {
             local_changed = true;
             if ((inst.type == host_type_input() || inst.type == host_type_input_area()) && inst.editable_state) {
                 std::string next_value;
@@ -3046,6 +4367,36 @@ TypeId host_type_canvas() {
     return &dummy;
 }
 
+TypeId host_type_line_chart() {
+    static int dummy;
+    return &dummy;
+}
+
+TypeId host_type_scatter_chart() {
+    static int dummy;
+    return &dummy;
+}
+
+TypeId host_type_area_chart() {
+    static int dummy;
+    return &dummy;
+}
+
+TypeId host_type_bar_chart() {
+    static int dummy;
+    return &dummy;
+}
+
+TypeId host_type_circle_chart() {
+    static int dummy;
+    return &dummy;
+}
+
+TypeId host_type_histogram_chart() {
+    static int dummy;
+    return &dummy;
+}
+
 Element View(const ViewProps& props, std::vector<Element> children) {
     Element e;
     e.type = host_type_view();
@@ -3086,6 +4437,48 @@ Element InputArea(const InputAreaProps& props, std::vector<Element> children) {
 Element Canvas(const CanvasProps& props) {
     Element e;
     e.type = host_type_canvas();
+    e.props = props;
+    return e;
+}
+
+Element LineChart(const LineChartProps& props) {
+    Element e;
+    e.type = host_type_line_chart();
+    e.props = props;
+    return e;
+}
+
+Element ScatterChart(const ScatterChartProps& props) {
+    Element e;
+    e.type = host_type_scatter_chart();
+    e.props = props;
+    return e;
+}
+
+Element AreaChart(const AreaChartProps& props) {
+    Element e;
+    e.type = host_type_area_chart();
+    e.props = props;
+    return e;
+}
+
+Element BarChart(const BarChartProps& props) {
+    Element e;
+    e.type = host_type_bar_chart();
+    e.props = props;
+    return e;
+}
+
+Element CircleChart(const CircleChartProps& props) {
+    Element e;
+    e.type = host_type_circle_chart();
+    e.props = props;
+    return e;
+}
+
+Element HistogramChart(const HistogramChartProps& props) {
+    Element e;
+    e.type = host_type_histogram_chart();
     e.props = props;
     return e;
 }
@@ -3218,6 +4611,7 @@ int run_react_app(const AppRenderFunc& app) {
         worker_start_w,
         worker_start_h
     ] {
+        register_repaint_queue(&ui_events);
         SkiaRuntime runtime(app, platform, worker_start_w, worker_start_h);
         std::uint64_t frame_id = 0;
 
@@ -3251,6 +4645,10 @@ int run_react_app(const AppRenderFunc& app) {
                 break;
             case reactcpp::UiEventType::Resize:
                 break;
+            case reactcpp::UiEventType::Tick:
+                runtime.perform_update_if_needed();
+                clear_repaint_tick_pending();
+                break;
             case reactcpp::UiEventType::TextEditing:
                 runtime.handle_text_editing(ev.text.c_str(), ev.edit_start, ev.edit_length);
                 break;
@@ -3267,6 +4665,7 @@ int run_react_app(const AppRenderFunc& app) {
             publish();
         }
 
+        unregister_repaint_queue(&ui_events);
         ui_events.stop();
     });
 
