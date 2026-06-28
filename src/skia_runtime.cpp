@@ -55,6 +55,8 @@
 #include "ports/SkFontScanner_FreeType.h"
 
 #include <fontconfig/fontconfig.h>
+#elif defined(__APPLE__)
+#include "ports/SkFontMgr_mac_ct.h"
 #endif
 
 #define SDL_MAIN_HANDLED
@@ -239,8 +241,10 @@ static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>& mgr) {
 static sk_sp<SkFontMgr> create_font_manager() {
 #if defined(__linux__) || defined(__CYGWIN__)
     return SkFontMgr_New_FontConfig(nullptr, SkFontScanner_Make_FreeType());
+#elif defined(__APPLE__)
+    return SkFontMgr_New_CoreText(nullptr);
 #else
-    return SkFontMgr::RefDefault();
+    return nullptr;
 #endif
 }
 
