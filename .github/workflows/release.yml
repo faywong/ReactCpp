@@ -109,7 +109,21 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="${RUNNER_TEMP}/sdl3"
           cmake --build /tmp/sdl3-build --config Release --parallel
           cmake --install /tmp/sdl3-build --config Release
-          echo "SDL3_DIR=${RUNNER_TEMP}/sdl3/lib/cmake/SDL3" >> "$GITHUB_ENV"
+          SDL3_INSTALL_PREFIX="${RUNNER_TEMP}/sdl3"
+          SDL3_DIR="${SDL3_INSTALL_PREFIX}/lib/cmake/SDL3"
+          SDL3_INCLUDE_DIR="${SDL3_INSTALL_PREFIX}/include"
+          SDL3_LIBRARY="$(find "${SDL3_INSTALL_PREFIX}" -type f \( -name "SDL3.lib" -o -name "SDL3-static.lib" \) | head -n 1)"
+
+          if [[ -z "${SDL3_LIBRARY}" ]]; then
+            echo "SDL3 library not found under ${SDL3_INSTALL_PREFIX}; falling back to package config lookup."
+            if [[ -d "${SDL3_DIR}" ]]; then
+              echo "SDL3_DIR=${SDL3_DIR}" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "SDL3_LIBRARY=${SDL3_LIBRARY}" >> "$GITHUB_ENV"
+            echo "SDL3_INCLUDE_DIR=${SDL3_INCLUDE_DIR}" >> "$GITHUB_ENV"
+            echo "SDL3_DIR=${SDL3_DIR}" >> "$GITHUB_ENV"
+          fi
 
       - name: Prepare Skia SDK from latest daily artifact
         shell: bash
