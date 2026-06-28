@@ -525,6 +525,89 @@ if (PkgConfig_FOUND)
     pkg_check_modules(HARFBUZZ QUIET harfbuzz)
 
     if (FREETYPE2_FOUND AND FONTCONFIG_FOUND AND HARFBUZZ_FOUND)
+        set(REACTCPP_FONT_LINK_LIBS)
+        set(REACTCPP_FONT_LINK_TARGETS)
+
+        if (TARGET PkgConfig::FONTCONFIG)
+            list(APPEND REACTCPP_FONT_LINK_TARGETS PkgConfig::FONTCONFIG)
+        else()
+            if (NOT FONTCONFIG_LIBRARY_DIRS)
+                set(FONTCONFIG_LIBRARY_DIRS
+                    /opt/homebrew/lib
+                    /usr/local/lib
+                    /usr/lib
+                )
+            endif()
+            find_library(_FONTCONFIG_LIBRARY NAMES fontconfig PATHS ${FONTCONFIG_LIBRARY_DIRS} NO_DEFAULT_PATH)
+            if (NOT _FONTCONFIG_LIBRARY)
+                find_library(_FONTCONFIG_LIBRARY NAMES fontconfig PATHS /opt/homebrew/lib /usr/local/lib /usr/lib)
+            endif()
+            if (_FONTCONFIG_LIBRARY)
+                list(APPEND REACTCPP_FONT_LINK_LIBS "${_FONTCONFIG_LIBRARY}")
+            else()
+                message(WARNING "fontconfig library not resolved to absolute path, falling back to pkg-config token list.")
+                list(APPEND REACTCPP_FONT_LINK_LIBS "${FONTCONFIG_LIBRARIES}")
+            endif()
+        endif()
+
+        if (TARGET PkgConfig::FREETYPE2)
+            list(APPEND REACTCPP_FONT_LINK_TARGETS PkgConfig::FREETYPE2)
+        else()
+            if (NOT FREETYPE2_LIBRARY_DIRS)
+                set(FREETYPE2_LIBRARY_DIRS
+                    /opt/homebrew/lib
+                    /usr/local/lib
+                    /usr/lib
+                )
+            endif()
+            find_library(_FREETYPE_LIBRARY NAMES freetype freetype2 PATHS ${FREETYPE2_LIBRARY_DIRS} NO_DEFAULT_PATH)
+            if (NOT _FREETYPE_LIBRARY)
+                find_library(_FREETYPE_LIBRARY NAMES freetype freetype2 PATHS /opt/homebrew/lib /usr/local/lib /usr/lib)
+            endif()
+            if (_FREETYPE_LIBRARY)
+                list(APPEND REACTCPP_FONT_LINK_LIBS "${_FREETYPE_LIBRARY}")
+            else()
+                list(APPEND REACTCPP_FONT_LINK_LIBS "${FREETYPE2_LIBRARIES}")
+            endif()
+        endif()
+
+        if (TARGET PkgConfig::HARFBUZZ)
+            list(APPEND REACTCPP_FONT_LINK_TARGETS PkgConfig::HARFBUZZ)
+        else()
+            if (NOT HARFBUZZ_LIBRARY_DIRS)
+                set(HARFBUZZ_LIBRARY_DIRS
+                    /opt/homebrew/lib
+                    /usr/local/lib
+                    /usr/lib
+                )
+            endif()
+            find_library(_HARFBUZZ_LIBRARY NAMES harfbuzz PATHS ${HARFBUZZ_LIBRARY_DIRS} NO_DEFAULT_PATH)
+            if (NOT _HARFBUZZ_LIBRARY)
+                find_library(_HARFBUZZ_LIBRARY NAMES harfbuzz PATHS /opt/homebrew/lib /usr/local/lib /usr/lib)
+            endif()
+            if (_HARFBUZZ_LIBRARY)
+                list(APPEND REACTCPP_FONT_LINK_LIBS "${_HARFBUZZ_LIBRARY}")
+            else()
+                list(APPEND REACTCPP_FONT_LINK_LIBS "${HARFBUZZ_LIBRARIES}")
+            endif()
+        endif()
+
+        if (REACTCPP_FONT_LINK_TARGETS)
+            target_link_libraries(reactcpp_demo PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
+            target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
+            target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
+            target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
+            target_link_libraries(reactcpp PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
+        endif()
+
+        if (REACTCPP_FONT_LINK_LIBS)
+            target_link_libraries(reactcpp_demo PRIVATE ${REACTCPP_FONT_LINK_LIBS})
+            target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE ${REACTCPP_FONT_LINK_LIBS})
+            target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE ${REACTCPP_FONT_LINK_LIBS})
+            target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE ${REACTCPP_FONT_LINK_LIBS})
+            target_link_libraries(reactcpp PRIVATE ${REACTCPP_FONT_LINK_LIBS})
+        endif()
+
         target_include_directories(reactcpp_demo
             PRIVATE
                 ${FREETYPE2_INCLUDE_DIRS}
@@ -594,53 +677,12 @@ if (PkgConfig_FOUND)
                 ${FONTCONFIG_CFLAGS_OTHER}
                 ${HARFBUZZ_CFLAGS_OTHER}
         )
-
-        # NOTE: link order matters for static libs: dependents first, dependencies after.
-        # fontconfig can depend on freetype, so keep fontconfig before freetype.
-        target_link_libraries(reactcpp_demo
-            PRIVATE
-                ${FONTCONFIG_LIBRARIES}
-                ${FREETYPE2_LIBRARIES}
-                ${HARFBUZZ_LIBRARIES}
-                m
-                dl
-        )
-
-        target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests
-            PRIVATE
-                ${FONTCONFIG_LIBRARIES}
-                ${FREETYPE2_LIBRARIES}
-                ${HARFBUZZ_LIBRARIES}
-                m
-                dl
-        )
-
-        target_link_libraries(react_cpp_skia_runtime_frame_retention_tests
-            PRIVATE
-                ${FONTCONFIG_LIBRARIES}
-                ${FREETYPE2_LIBRARIES}
-                ${HARFBUZZ_LIBRARIES}
-                m
-                dl
-        )
-
-        target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
-            PRIVATE
-                ${FONTCONFIG_LIBRARIES}
-                ${FREETYPE2_LIBRARIES}
-                ${HARFBUZZ_LIBRARIES}
-                m
-                dl
-        )
-
-        target_link_libraries(reactcpp
-            PRIVATE
-                ${FONTCONFIG_LIBRARIES}
-                ${FREETYPE2_LIBRARIES}
-                ${HARFBUZZ_LIBRARIES}
-                m
-                dl
-        )
+        list(APPEND REACTCPP_FONT_LINK_LIBS m dl)
+        target_link_libraries(reactcpp_demo PRIVATE m dl)
+        target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE m dl)
+        target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE m dl)
+        target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE m dl)
+        target_link_libraries(reactcpp PRIVATE m dl)
     else()
         message(WARNING "pkg-config did not find all Skia font deps (freetype2/fontconfig/harfbuzz). If your Skia build has text enabled, linking may fail.")
     endif()
