@@ -96,6 +96,21 @@ jobs:
         run: |
           brew install pkg-config sdl3
 
+      - name: Install Windows SDL3 dependencies
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          git clone --depth=1 https://github.com/libsdl-org/SDL.git /tmp/sdl3
+          cmake -S /tmp/sdl3 -B /tmp/sdl3-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_TEST=OFF \
+            -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_INSTALL_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX="${RUNNER_TEMP}/sdl3"
+          cmake --build /tmp/sdl3-build --config Release --parallel
+          cmake --install /tmp/sdl3-build --config Release
+          echo "SDL3_DIR=${RUNNER_TEMP}/sdl3/lib/cmake/SDL3" >> "$GITHUB_ENV"
+
       - name: Prepare Skia SDK from latest daily artifact
         shell: bash
         env:
