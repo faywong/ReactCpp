@@ -124,15 +124,22 @@ jobs:
               export CMAKE_PREFIX_PATH="${brew_prefix_sdl3}:/opt/homebrew:/usr/local:/usr"
               export PKG_CONFIG_PATH="${brew_prefix_sdl3}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
               export SDL3_DIR="${brew_prefix_sdl3}/lib/cmake/SDL3"
+              export SDL3_LIBRARY="${brew_prefix_sdl3}/lib/libSDL3.dylib"
+              export SDL3_INCLUDE_DIR="${brew_prefix_sdl3}/include"
             fi
             export PKG_CONFIG_PATH="${HOME_PREFIX}/lib/pkgconfig:/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+            export CMAKE_FRAMEWORK_PATH="${HOME_PREFIX}/Frameworks:/Library/Frameworks:/System/Library/Frameworks"
             export CMAKE_MODULE_PATH="${HOME_PREFIX}/lib/cmake:/usr/local/lib/cmake:/usr/lib/cmake"
             echo "Using CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
             echo "Using PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
           else
             export CMAKE_PREFIX_PATH="/usr/local:/usr"
           fi
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" -DREACTCPP_BUILD_DEMO=ON ${SDL3_DIR+ -DSDL3_DIR="${SDL3_DIR}"}
+          if [[ -n "${SDL3_DIR:-}" ]]; then
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" -DREACTCPP_BUILD_DEMO=ON -DSDL3_DIR="${SDL3_DIR}" -DSDL3_LIBRARY="${SDL3_LIBRARY}" -DSDL3_INCLUDE_DIR="${SDL3_INCLUDE_DIR}"
+          else
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" -DREACTCPP_BUILD_DEMO=ON
+          fi
 
       - name: Build runtime library and demo
         run: |
