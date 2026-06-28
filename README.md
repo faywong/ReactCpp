@@ -7,16 +7,30 @@ ReactCpp is a React-inspired C++20 cross-platform declarative GUI framework in a
 ## Rendering engine features
 
 - **Declarative C++ UI**: author UI with React/Revery-style pure functions that return `Element` trees.
-- **Hooks and batched updates**: `use_state<T>` stores ordered hook slots on instance nodes and coalesces state updates until the next frame boundary.
-- **Virtual/instance reconciliation**: the runtime diffs new virtual trees against retained instance nodes and invalidates only changed nodes.
-- **Yoga layout**: host nodes use Yoga Flexbox layout, with measured text/input nodes and retained layout results.
-- **Skia rendering**: Ganesh OpenGL is attempted first, with CPU raster fallback when GL initialization fails.
-- **SkPicture caching**: each instance records its own cached `SkPicture`; dirty nodes re-record while unchanged nodes reuse cached drawing.
-- **Threaded Ganesh path**: the GL mode records UI frames on a worker thread and presents on the SDL main thread through a frame mailbox.
-- **SDL3 input**: mouse hit testing, click bubbling, focus, IME text input, caret placement, selection, clipboard, undo, and multiline editing are handled in the runtime.
-- **Context menu copy**: right-click a focused/selected element and use Copy to place its text-like content on the system clipboard.
+- **Hooks and batched updates**: `use_state<T>` stores ordered hook slots on instance nodes; state setters only request an update, and reconciliation runs at the next frame boundary.
+- **Retained virtual/instance tree**: the runtime diffs regenerated virtual trees against retained instance nodes and invalidates only changed nodes.
+- **Yoga layout**: host nodes use Yoga Flexbox layout, with measured text/input nodes and retained layout results. `Text` keeps intrinsic width unless an explicit width is set, so focus outlines and hit boxes follow the measured label width instead of the stretched parent width.
+- **Skia rendering**: Ganesh OpenGL is attempted first; if GL initialization fails, the demo falls back to CPU raster rendering with the same runtime behavior.
+- **SkPicture caching**: every instance owns a cached `SkPicture`; dirty nodes re-record with `SkPictureRecorder`, while unchanged nodes reuse cached drawing.
+- **Threaded Ganesh path**: GL mode keeps SDL/window/GPU presentation on the main thread and records UI frames on a worker thread. Frames cross threads through `FrameMailbox`, and each frame retains the per-node pictures it references.
+- **SDL3 input**: mouse hit testing, click bubbling, focus, IME text input, caret placement, selection, clipboard, undo, multiline editing, and mouse-wheel scrolling are handled in the runtime.
+- **Context menu copy**: right-click an element to open a Skia-rendered Copy menu. Copy writes text-like element content to the system clipboard through the platform command queue.
 - **System font selection**: Linux text rendering uses fontconfig-backed Skia font management and chooses a system CJK font for Chinese text.
-- **Draw.io canvas**: `Canvas` renders a raw/uncompressed draw.io `mxGraphModel` subset directly with Skia.
+- **Draw.io canvas**: `Canvas` renders a raw/uncompressed draw.io `mxGraphModel` subset directly with Skia, including common shapes, labels, waypoints, edge arrows, and shape-boundary connector endpoints.
+
+## Runtime rendering pipeline
+
+ReactCpp uses a retained UI pipeline:
+
+1. Component functions build a virtual `Element` tree.
+2. `reconcile()` updates the retained `InstanceNode` tree and preserves hook slots where `(type, key/position)` still match.
+3. Yoga computes layout for the retained tree. Measured leaves such as `Text`, `Button`, and `Input` report intrinsic sizes when no explicit size is set.
+4. Dirty instances drop their cached picture. Clean instances keep their previous `SkPicture`.
+5. `render_cached_node()` records only dirty/missing node pictures, draws cached pictures for clean nodes, then draws runtime overlays such as carets, focus rings, and the context menu.
+
+State updates are intentionally frame-boundary batched. An event handler calls `StateHandle<T>::set()` or `update()`, the setter mutates the hook payload and requests an update, then `perform_update_if_needed()` re-runs the app render function before the next draw. This keeps event handlers non-reentrant while still producing deterministic `state -> render -> reconcile -> dirty pictures -> draw` updates.
+
+In Ganesh GL mode, `SkiaRuntime` runs on a worker thread. The SDL main thread drains platform events into `UiEventQueue`, applies `PlatformCommandQueue` operations such as IME area updates and clipboard writes, consumes the latest `FrameMailbox` frame, and presents it to the window backbuffer. A published `Frame` contains a frame-level `SkPicture` plus `retained_pictures`, which keeps strong references to all per-node cached pictures used while recording that frame.
 
 ## Component usage
 
@@ -103,7 +117,7 @@ input_area()
 
 ### Canvas
 
-`canvas()` renders a draw.io diagram from raw/uncompressed `mxGraphModel` XML. It supports common `mxCell` vertices and edges, including rectangles, rounded rectangles, ellipses, diamonds, cylinders, swimlanes, image placeholders, wrapped labels, dashed strokes, edge waypoints, and source/target connector arrows.
+`canvas()` renders a draw.io diagram from raw/uncompressed `mxGraphModel` XML. It supports common `mxCell` vertices and edges, including rectangles, rounded rectangles, ellipses, diamonds/rhombuses, cylinders, swimlanes, image placeholders, wrapped labels, dashed strokes, edge waypoints, source/target connector arrows, and connector endpoints that meet the source/target shape boundary instead of the shape center.
 
 ```cpp
 canvas()
@@ -124,6 +138,16 @@ canvas()
 ```
 
 Compressed draw.io `<diagram>` payloads are not inflated yet; pass raw `mxGraphModel` XML for now.
+
+### Context menu copy
+
+The runtime includes a small Skia-rendered context menu overlay. Right-click any hit-tested element and choose Copy to write text-like content to the system clipboard:
+
+- `Text`: label text
+- `Button`: button label
+- `Input` / `InputArea`: selected text when present, otherwise the current value
+- `Canvas`: raw draw.io XML
+- containers: copyable descendant content joined with newlines
 
 ## Prerequisites
 
@@ -189,6 +213,10 @@ location, pass:
 cmake -S . -B build -DSKIA_SDK_ROOT=/path/to/skia-sdk
 ```
 
+The demo is the primary executable. If the Skia SDK is missing while
+`REACTCPP_BUILD_DEMO` is enabled, CMake fails configuration instead of silently
+skipping the target.
+
 Run:
 
 ```bash
@@ -209,6 +237,12 @@ to stderr with a stable prefix:
 
 The initial window size is computed at runtime as **0.6x** the primary display's
 usable desktop bounds (no hard-coded 800x600).
+
+The CPU fallback uses the same `SkiaRuntime` pipeline but presents through an
+SDL renderer and a streaming BGRA texture. GL mode uses a worker-thread
+recording path plus main-thread GPU presentation, so SDL and OpenGL thread
+affinity stay isolated from virtual tree reconciliation and per-node picture
+recording.
 
 ## License
 
