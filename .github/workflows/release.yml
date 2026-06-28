@@ -291,8 +291,9 @@ jobs:
           RELEASE_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease || 'false' }}
         run: |
           set -euo pipefail
+          REPO="${GITHUB_REPOSITORY}"
 
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+          if gh release view "${RELEASE_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
             echo "Release ${RELEASE_TAG} already exists"
           else
             extra_flags=""
@@ -302,9 +303,9 @@ jobs:
             if [[ "${RELEASE_PRERELEASE}" == "true" ]]; then
               extra_flags="${extra_flags} --prerelease"
             fi
-            gh release create "${RELEASE_TAG}" ${extra_flags} --target "${GITHUB_SHA}" --title "ReactCpp ${RELEASE_TAG}" --notes "Automated release assets for ${RELEASE_TAG}."
+            gh release create "${RELEASE_TAG}" ${extra_flags} --repo "${REPO}" --target "${GITHUB_SHA}" --title "ReactCpp ${RELEASE_TAG}" --notes "Automated release assets for ${RELEASE_TAG}."
           fi
 
           for pkg in artifacts/*.zip; do
-            gh release upload "${RELEASE_TAG}" "${pkg}" --clobber
+            gh release upload "${RELEASE_TAG}" "${pkg}" --repo "${REPO}" --clobber
           done
