@@ -121,7 +121,9 @@ jobs:
             export CMAKE_PREFIX_PATH="${HOME_PREFIX}:/usr/local:/usr"
             export CMAKE_FRAMEWORK_PATH="${HOME_PREFIX}/lib:/usr/local/lib:/usr/lib"
             if brew_prefix_sdl3="$(brew --prefix sdl3 2>/dev/null)"; then
+              export CMAKE_PREFIX_PATH="${brew_prefix_sdl3}:/opt/homebrew:/usr/local:/usr"
               export PKG_CONFIG_PATH="${brew_prefix_sdl3}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+              export SDL3_DIR="${brew_prefix_sdl3}/lib/cmake/SDL3"
             fi
             export PKG_CONFIG_PATH="${HOME_PREFIX}/lib/pkgconfig:/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
             export CMAKE_MODULE_PATH="${HOME_PREFIX}/lib/cmake:/usr/local/lib/cmake:/usr/lib/cmake"
@@ -130,7 +132,7 @@ jobs:
           else
             export CMAKE_PREFIX_PATH="/usr/local:/usr"
           fi
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" -DREACTCPP_BUILD_DEMO=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" -DREACTCPP_BUILD_DEMO=ON ${SDL3_DIR+ -DSDL3_DIR="${SDL3_DIR}"}
 
       - name: Build runtime library and demo
         run: |

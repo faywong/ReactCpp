@@ -203,10 +203,10 @@ add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
     if (NOT REACTCPP_SDL_FOUND)
         # Manual fallback (common on distros without pkg-config/.pc or CMake package config files)
         set(REACTCPP_SDL3_PREFIXES
-            ${CMAKE_PREFIX_PATH}
             /opt/homebrew
             /usr/local
             /usr
+            ${CMAKE_PREFIX_PATH}
         )
 
         find_path(SDL3_INCLUDE_DIR
@@ -221,6 +221,23 @@ add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
             ${REACTCPP_SDL3_PREFIXES}
             PATH_SUFFIXES lib
         )
+        if (NOT SDL3_LIBRARY)
+            find_library(SDL3_LIBRARY
+                NAMES SDL3
+                HINTS
+                ${REACTCPP_SDL3_PREFIXES}
+                PATH_SUFFIXES Frameworks
+            )
+        endif()
+        if (NOT SDL3_LIBRARY)
+            find_library(SDL3_LIBRARY
+                NAMES SDL3
+                PATHS
+                /opt/homebrew/Frameworks
+                /Library/Frameworks
+                /System/Library/Frameworks
+            )
+        endif()
         if (SDL3_INCLUDE_DIR AND SDL3_LIBRARY)
             set(REACTCPP_SDL_FOUND ON)
             set(REACTCPP_SDL_INCLUDE_DIRS "${SDL3_INCLUDE_DIR}")
