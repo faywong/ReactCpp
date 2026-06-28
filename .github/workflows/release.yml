@@ -78,6 +78,17 @@ jobs:
             python3 \
             python3-venv
 
+          if [[ -z "${SDL3_DEV_PKGS}" ]]; then
+            git clone --depth=1 https://github.com/libsdl-org/SDL.git /tmp/sdl3
+            cmake -S /tmp/sdl3 -B /tmp/sdl3-build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSDL_TEST=OFF \
+              -DSDL_TEST_LIBRARY=OFF \
+              -DSDL_INSTALL_TESTS=OFF
+            cmake --build /tmp/sdl3-build --parallel
+            sudo cmake --install /tmp/sdl3-build
+          fi
+
       - name: Install macOS dependencies
         if: matrix.platform == 'macos'
         run: |
@@ -96,7 +107,7 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DREACTCPP_BUILD_DEMO=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local -DREACTCPP_BUILD_DEMO=ON
 
       - name: Build runtime library and demo
         run: |
