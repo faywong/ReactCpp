@@ -158,15 +158,15 @@ jobs:
           ARCHIVE="${GITHUB_WORKSPACE}/reactcpp-${PACKAGE_TAG}-${{ matrix.platform }}-${{ matrix.arch }}.zip"
           export PACKAGE_DIR ARCHIVE
           python3 - <<'PY'
-import os
-import shutil
+          import os
+          import shutil
 
-package = os.environ['PACKAGE_DIR']
-out = os.environ['ARCHIVE']
-base = os.path.basename(package)
-zip_root = os.path.splitext(out)[0]
-shutil.make_archive(zip_root, 'zip', root_dir=os.path.dirname(package), base_dir=base)
-PY
+          package = os.environ['PACKAGE_DIR']
+          out = os.environ['ARCHIVE']
+          base = os.path.basename(package)
+          zip_root = os.path.splitext(out)[0]
+          shutil.make_archive(zip_root, 'zip', root_dir=os.path.dirname(package), base_dir=base)
+          PY
           echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
 
       - name: Upload package artifact
