@@ -266,6 +266,11 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
     needs: build_package
     steps:
+      - name: Checkout ReactCpp
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
       - name: Resolve release tag
         id: tag
         run: |
