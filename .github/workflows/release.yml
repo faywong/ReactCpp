@@ -20,6 +20,11 @@ on:
         required: false
         type: boolean
         default: false
+      dry_run:
+        description: "Workflow dispatch only: validate pack/artifact flow and skip GitHub release publish"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -178,6 +183,7 @@ jobs:
   publish_release:
     name: publish-release
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
     needs: build_package
     steps:
       - name: Resolve release tag
