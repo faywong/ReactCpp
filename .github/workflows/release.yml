@@ -1,0 +1,224 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to publish (for workflow_dispatch only)"
+        required: true
+        default: "v0.0.0"
+      draft:
+        description: "Create the release as draft"
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark release as prerelease"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build_package:
+    name: build-${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x64
+            runner: ubuntu-latest
+          - platform: macos
+            arch: arm64
+            runner: macos-14
+          - platform: windows
+            arch: x64
+            runner: windows-latest
+
+    steps:
+      - name: Checkout ReactCpp
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libgl1-mesa-dev \
+            libharfbuzz-dev \
+            pkg-config \
+            python3 \
+            python3-venv
+
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
+        run: |
+          brew install pkg-config
+
+      - name: Prepare Skia SDK from latest daily artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/skia/setup_skia_sdk.py \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --from-github-artifact
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DREACTCPP_BUILD_DEMO=ON
+
+      - name: Build runtime library and demo
+        run: |
+          cmake --build build --config Release --parallel --target reactcpp reactcpp_demo
+
+      - name: Pack release artifact
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_TAG="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}"
+          PACKAGE_DIR="${GITHUB_WORKSPACE}/build/reactcpp-${PACKAGE_TAG}-${{ matrix.platform }}-${{ matrix.arch }}"
+          mkdir -p "${PACKAGE_DIR}/bin" "${PACKAGE_DIR}/lib" "${PACKAGE_DIR}/skia-sdk-lib"
+
+          find_file() {
+            local name="$1"
+            local out=""
+            if [[ -f "${GITHUB_WORKSPACE}/build/${name}" ]]; then
+              out="${GITHUB_WORKSPACE}/build/${name}"
+            elif [[ -f "${GITHUB_WORKSPACE}/build/Release/${name}" ]]; then
+              out="${GITHUB_WORKSPACE}/build/Release/${name}"
+            elif [[ -f "${GITHUB_WORKSPACE}/build/Debug/${name}" ]]; then
+              out="${GITHUB_WORKSPACE}/build/Debug/${name}"
+            else
+              out="$(find "${GITHUB_WORKSPACE}/build" -type f -name "${name}" | head -n 1 || true)"
+            fi
+            printf '%s' "${out}"
+          }
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            DEMO_NAME="reactcpp_demo.exe"
+          else
+            DEMO_NAME="reactcpp_demo"
+          fi
+
+          DEMO_PATH="$(find_file "${DEMO_NAME}")"
+          if [[ -z "${DEMO_PATH}" ]]; then
+            echo "Could not locate demo binary ${DEMO_NAME}"
+            exit 1
+          fi
+          cp -v "${DEMO_PATH}" "${PACKAGE_DIR}/bin/"
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            find "${GITHUB_WORKSPACE}/build" -type f \
+              \( -name "reactcpp*.dll" -o -name "reactcpp*.dll.lib" -o -name "*reactcpp*.lib" \) \
+              -maxdepth 5 -print0 | xargs -0 -I{} cp -v "{}" "${PACKAGE_DIR}/lib/"
+          else
+            find "${GITHUB_WORKSPACE}/build" -type f \
+              \( -name "libreactcpp.so*" -o -name "libreactcpp.dylib*" -o -name "libreactcpp.a" -o -name "reactcpp" \) \
+              -maxdepth 5 -print0 | xargs -0 -I{} cp -v "{}" "${PACKAGE_DIR}/lib/"
+          fi
+
+          SKIA_LIB_DIR="${GITHUB_WORKSPACE}/.reactcpp/skia-sdk/${{ matrix.platform }}-${{ matrix.arch }}/lib"
+          if [[ ! -d "${SKIA_LIB_DIR}" ]]; then
+            echo "Skia SDK lib directory missing: ${SKIA_LIB_DIR}"
+            exit 1
+          fi
+          cp -v "${SKIA_LIB_DIR}"/* "${PACKAGE_DIR}/skia-sdk-lib/"
+
+          if [[ ! -s "${PACKAGE_DIR}/bin/${DEMO_NAME}" ]]; then
+            echo "Demo binary not found in ${PACKAGE_DIR}/bin"
+            exit 1
+          fi
+
+          if ! find "${PACKAGE_DIR}/lib" -maxdepth 1 -type f -name "*" | grep -q .; then
+            echo "Framework shared library files not found"
+            exit 1
+          fi
+
+          ARCHIVE="${GITHUB_WORKSPACE}/reactcpp-${PACKAGE_TAG}-${{ matrix.platform }}-${{ matrix.arch }}.zip"
+          export PACKAGE_DIR ARCHIVE
+          python3 - <<'PY'
+import os
+import shutil
+
+package = os.environ['PACKAGE_DIR']
+out = os.environ['ARCHIVE']
+base = os.path.basename(package)
+zip_root = os.path.splitext(out)[0]
+shutil.make_archive(zip_root, 'zip', root_dir=os.path.dirname(package), base_dir=base)
+PY
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: reactcpp-package-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ steps.pack.outputs.archive }}
+
+  publish_release:
+    name: publish-release
+    runs-on: ubuntu-latest
+    needs: build_package
+    steps:
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+          pattern: reactcpp-package-*
+          merge-multiple: true
+
+      - name: Publish GitHub release assets
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft || 'false' }}
+          RELEASE_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease || 'false' }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists"
+          else
+            extra_flags=""
+            if [[ "${RELEASE_DRAFT}" == "true" ]]; then
+              extra_flags="${extra_flags} --draft"
+            fi
+            if [[ "${RELEASE_PRERELEASE}" == "true" ]]; then
+              extra_flags="${extra_flags} --prerelease"
+            fi
+            gh release create "${RELEASE_TAG}" ${extra_flags} --target "${GITHUB_SHA}" --title "ReactCpp ${RELEASE_TAG}" --notes "Automated release assets for ${RELEASE_TAG}."
+          fi
+
+          for pkg in artifacts/*.zip; do
+            gh release upload "${RELEASE_TAG}" "${pkg}" --clobber
+          done

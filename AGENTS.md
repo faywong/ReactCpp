@@ -1,6 +1,6 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-03-12
+**Generated:** 2026-06-28
 
 ## OVERVIEW
 Small experimental repo for a native reactive GUI framework PoC built in C++20, with Skia (Ganesh OpenGL by default, CPU raster fallback) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
@@ -27,7 +27,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 ## CURRENT STRUCTURE
 ```text
 ./
-├── CMakeLists.txt        # Builds SDL3 + Skia demo; pulls Yoga via FetchContent
+├── CMakeLists.txt        # Builds reactcpp shared library (`reactcpp`) and SDL3+Skia demo; pulls Yoga via FetchContent
 ├── README.md             # Build prerequisites (Skia SDK) + build/run commands
 ├── scripts/
 │   └── skia/
@@ -35,7 +35,8 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 │       └── build_skia_sdk.py # Builds/packages the Skia SDK
 ├── .github/
 │   └── workflows/
-│       └── skia-sdk-daily.yml # Daily/manual Skia SDK artifact build
+│       ├── skia-sdk-daily.yml # Daily/manual Skia SDK artifact build
+│       └── release.yml       # Tag/manual release pipeline: package + publish shared lib/demo/skia-sdk libs
 ├── build/                # CMake build artifacts (generated)
 └── src/
     ├── main.cpp          # SDL3 + Skia demo entry (uses skia_runtime)
@@ -56,7 +57,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 ## WHERE TO LOOK (TODAY)
 | Task                                    | Location          | Notes |
 |----------------------------------------|-------------------|-------|
-| Project build entry                     | `CMakeLists.txt`  | Builds `react_cpp_sdl_skia_demo`. Skia is found from `SKIA_SDK_ROOT` or the default `.reactcpp/skia-sdk/<platform>-<arch>` path. Missing Skia is a configure-time error. |
+| Project build entry                     | `CMakeLists.txt`  | Builds shared library `reactcpp` and `reactcpp_demo`. Skia is found from `SKIA_SDK_ROOT` or the default `.reactcpp/skia-sdk/<platform>-<arch>` path. Missing Skia is a configure-time error. |
 | Current demo entry                      | `src/main.cpp`    | Creates a simple element tree and calls `run_skia_app()`. |
 | Declarative UI authoring DSL helpers    | `src/element_dsl.hpp` | Fluent builder DSL under `reactcpp::ui` to make element trees structure-first. |
 | SDL3 + Skia + Yoga runtime              | `src/skia_runtime.*` | SDL3 event loop + Skia rendering + Yoga flexbox layout. |
@@ -65,6 +66,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 | Skia SDK setup                          | `scripts/skia/setup_skia_sdk.py` | Installs latest CI artifact via `gh` or builds locally. |
 | Skia SDK build internals                | `scripts/skia/build_skia_sdk.py` | Builds/packages the Skia profile into `.reactcpp/skia-sdk/<platform>-<arch>`. |
 | Skia daily CI                           | `.github/workflows/skia-sdk-daily.yml` | Daily/manual Skia SDK artifact builds for Linux, macOS, and Windows. |
+| Release packaging                       | `.github/workflows/release.yml` | CI release pipeline that builds `reactcpp` + `reactcpp_demo`, bundles Skia SDK libs and demo/package assets, and uploads release assets. |
 
 ### Skia dependency
 
@@ -88,9 +90,9 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
      - Maintain minimal Instance reuse and subtree replacement.
 
 2. **Introduce Skia Rendering (Done)**
-   - `react_cpp_sdl_skia_demo`:
+   - `reactcpp_demo` (shared lib + demo binary pipeline):
      - Uses SDL3 for window and event loop.
-- Uses a Ganesh GL-backed `SkSurface` by default; if GL init fails, logs a warning and falls back to a CPU raster `SkSurface`.
+     - Uses a Ganesh GL-backed `SkSurface` by default; if GL init fails, logs a warning and falls back to a CPU raster `SkSurface`.
 
 3. **Add SkPicture-Based Caching**
    - For each widget/node, maintain a `sk_sp<SkPicture>` cache:

@@ -34,10 +34,10 @@ jobs:
 
     steps:
       - name: Checkout ReactCpp
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
@@ -71,7 +71,7 @@ jobs:
             --archive "$PWD/skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip"
 
       - name: Upload Skia SDK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}
           path: skia-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip

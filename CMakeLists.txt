@@ -70,17 +70,34 @@ target_include_directories(react_cpp_text_wrap_tests
 add_test(NAME text_wrap_tests COMMAND react_cpp_text_wrap_tests)
 
 if (REACTCPP_BUILD_DEMO)
+    add_library(reactcpp
+        SHARED
+            src/skia_runtime.cpp
+    )
+
+    target_include_directories(reactcpp
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+
+    set_target_properties(reactcpp
+        PROPERTIES
+            OUTPUT_NAME reactcpp
+            WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+
     add_executable(reactcpp_demo
-        src/skia_runtime.hpp
-        src/skia_runtime.cpp
         src/main.cpp
     )
+
+    target_link_libraries(reactcpp_demo PRIVATE reactcpp)
 
     # Rendering backends:
     # - Ganesh GL is always attempted first and is not user-disableable.
     # - If GL init fails at runtime, we fall back to CPU raster with a loud warning.
     find_package(OpenGL REQUIRED)
     target_link_libraries(reactcpp_demo PRIVATE OpenGL::GL)
+    target_link_libraries(reactcpp PRIVATE OpenGL::GL)
 
     add_executable(react_cpp_skia_runtime_input_area_enter_tests
         tests/skia_runtime_input_area_enter_tests.cpp
@@ -199,6 +216,11 @@ add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
     endif()
 
 if (REACTCPP_SDL_INCLUDE_DIRS)
+    target_include_directories(reactcpp
+        PRIVATE
+            ${REACTCPP_SDL_INCLUDE_DIRS}
+    )
+
     target_include_directories(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_INCLUDE_DIRS}
@@ -221,6 +243,11 @@ if (REACTCPP_SDL_INCLUDE_DIRS)
 endif()
 
 if (REACTCPP_SDL_CFLAGS_OTHER)
+    target_compile_options(reactcpp
+        PRIVATE
+            ${REACTCPP_SDL_CFLAGS_OTHER}
+    )
+
     target_compile_options(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_CFLAGS_OTHER}
@@ -243,6 +270,11 @@ if (REACTCPP_SDL_CFLAGS_OTHER)
 endif()
 
 if (REACTCPP_SDL_IMPORTED_TARGET)
+    target_link_libraries(reactcpp
+        PRIVATE
+            ${REACTCPP_SDL_IMPORTED_TARGET}
+    )
+
     target_link_libraries(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_IMPORTED_TARGET}
@@ -263,6 +295,11 @@ if (REACTCPP_SDL_IMPORTED_TARGET)
             ${REACTCPP_SDL_IMPORTED_TARGET}
     )
 else()
+    target_link_libraries(reactcpp
+        PRIVATE
+            ${REACTCPP_SDL_LIBRARIES}
+    )
+
     target_link_libraries(reactcpp_demo
         PRIVATE
             ${REACTCPP_SDL_LIBRARIES}
@@ -312,6 +349,12 @@ target_include_directories(reactcpp_demo
         "${SKIA_ROOT}"
 )
 
+target_include_directories(reactcpp
+    PRIVATE
+        "${SKIA_ROOT}/include"  # for core/SkCanvas.h
+        "${SKIA_ROOT}"
+)
+
 target_include_directories(react_cpp_skia_runtime_input_area_enter_tests
     PRIVATE
         "${SKIA_ROOT}/include"
@@ -331,6 +374,11 @@ target_include_directories(react_cpp_skia_runtime_ime_area_scroll_tests
 )
 
 target_link_libraries(reactcpp_demo
+    PRIVATE
+        "${SKIA_LIB_PATH}"
+)
+
+target_link_libraries(reactcpp
     PRIVATE
         "${SKIA_LIB_PATH}"
 )
@@ -368,6 +416,11 @@ if (EXISTS "${SKIA_SKCMS_LIB_PATH}")
     )
 
     target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
+        PRIVATE
+            "${SKIA_SKCMS_LIB_PATH}"
+    )
+
+    target_link_libraries(reactcpp
         PRIVATE
             "${SKIA_SKCMS_LIB_PATH}"
     )
@@ -412,6 +465,13 @@ if (PkgConfig_FOUND)
                 ${HARFBUZZ_INCLUDE_DIRS}
         )
 
+        target_include_directories(reactcpp
+            PRIVATE
+                ${FREETYPE2_INCLUDE_DIRS}
+                ${FONTCONFIG_INCLUDE_DIRS}
+                ${HARFBUZZ_INCLUDE_DIRS}
+        )
+
         target_compile_options(reactcpp_demo
             PRIVATE
                 ${FREETYPE2_CFLAGS_OTHER}
@@ -434,6 +494,13 @@ if (PkgConfig_FOUND)
         )
 
         target_compile_options(react_cpp_skia_runtime_ime_area_scroll_tests
+            PRIVATE
+                ${FREETYPE2_CFLAGS_OTHER}
+                ${FONTCONFIG_CFLAGS_OTHER}
+                ${HARFBUZZ_CFLAGS_OTHER}
+        )
+
+        target_compile_options(reactcpp
             PRIVATE
                 ${FREETYPE2_CFLAGS_OTHER}
                 ${FONTCONFIG_CFLAGS_OTHER}
@@ -477,12 +544,27 @@ if (PkgConfig_FOUND)
                 m
                 dl
         )
+
+        target_link_libraries(reactcpp
+            PRIVATE
+                ${FONTCONFIG_LIBRARIES}
+                ${FREETYPE2_LIBRARIES}
+                ${HARFBUZZ_LIBRARIES}
+                m
+                dl
+        )
     else()
         message(WARNING "pkg-config did not find all Skia font deps (freetype2/fontconfig/harfbuzz). If your Skia build has text enabled, linking may fail.")
     endif()
 endif()
 
 target_link_libraries(reactcpp_demo
+    PRIVATE
+        Threads::Threads
+        yogacore
+)
+
+target_link_libraries(reactcpp
     PRIVATE
         Threads::Threads
         yogacore
