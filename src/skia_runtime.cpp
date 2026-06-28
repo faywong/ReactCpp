@@ -79,6 +79,10 @@
 
 thread_local HookDispatcher g_skia_dispatcher;
 
+HookDispatcher& get_hook_dispatcher() {
+    return g_skia_dispatcher;
+}
+
 namespace {
 
 static SDL_DisplayID pick_primary_display_id() {

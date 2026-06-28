@@ -231,7 +231,7 @@ struct HookDispatcher {
     void* request_update_ctx{nullptr};
 };
 
-extern thread_local HookDispatcher g_skia_dispatcher;
+HookDispatcher& get_hook_dispatcher();
 
 template <typename T>
 struct StateHandle {
@@ -270,7 +270,7 @@ struct StateHandle {
 
         *ptr = new_value;
 
-        HookDispatcher& d = g_skia_dispatcher;
+        HookDispatcher& d = get_hook_dispatcher();
         if (d.request_update) {
             d.request_update(d.request_update_ctx);
         }
@@ -292,7 +292,7 @@ struct StateHandle {
 
         *ptr = static_cast<T>(fn(*ptr));
 
-        HookDispatcher& d = g_skia_dispatcher;
+        HookDispatcher& d = get_hook_dispatcher();
         if (d.request_update) {
             d.request_update(d.request_update_ctx);
         }
@@ -305,7 +305,7 @@ struct StateHandle {
 
 template <typename T>
 StateHandle<T> use_state(const T& initial) {
-    HookDispatcher& d = g_skia_dispatcher;
+        HookDispatcher& d = get_hook_dispatcher();
     if (!d.current_instance) {
         throw std::runtime_error("use_state called outside of render");
     }
