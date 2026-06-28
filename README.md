@@ -168,10 +168,9 @@ histogram_chart()
 
 Charts demo (live streaming + themes + layout):
 
-<video controls autoplay muted loop playsinline preload="metadata" width="960">
-  <source src="docs/images/charts-demo.webm" type="video/webm" />
-  Your browser does not support HTML5 video.
-</video>
+![Charts demo animation](docs/images/charts-demo.webp)
+
+([Download the charts demo video (webm)](docs/images/charts-demo.webm))
 
 ### Context menu copy
 
