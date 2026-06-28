@@ -60,9 +60,16 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
+          if apt-cache show libsdl3-dev > /dev/null 2>&1; then
+            SDL3_DEV_PKGS="libsdl3-dev"
+          else
+            SDL3_DEV_PKGS=""
+          fi
           sudo apt-get install -y \
             build-essential \
             git \
+            libsdl2-dev \
+            ${SDL3_DEV_PKGS} \
             libfontconfig1-dev \
             libfreetype-dev \
             libgl1-mesa-dev \
