@@ -167,19 +167,27 @@ add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
 
     find_package(PkgConfig QUIET)
     if (PkgConfig_FOUND)
-        pkg_check_modules(SDL3 QUIET sdl3)
+        pkg_check_modules(SDL3 QUIET IMPORTED_TARGET sdl3)
         if (SDL3_FOUND)
             set(REACTCPP_SDL_FOUND ON)
             set(REACTCPP_SDL_INCLUDE_DIRS ${SDL3_INCLUDE_DIRS})
             set(REACTCPP_SDL_CFLAGS_OTHER ${SDL3_CFLAGS_OTHER})
-            set(REACTCPP_SDL_LIBRARIES ${SDL3_LIBRARIES})
+            if (TARGET PkgConfig::SDL3)
+                set(REACTCPP_SDL_IMPORTED_TARGET PkgConfig::SDL3)
+            else()
+                set(REACTCPP_SDL_LIBRARIES ${SDL3_LIBRARIES})
+            endif()
         else()
-            pkg_check_modules(SDL2 QUIET sdl2)
+            pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2)
             if (SDL2_FOUND)
                 set(REACTCPP_SDL_FOUND ON)
                 set(REACTCPP_SDL_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
                 set(REACTCPP_SDL_CFLAGS_OTHER ${SDL2_CFLAGS_OTHER})
-                set(REACTCPP_SDL_LIBRARIES ${SDL2_LIBRARIES})
+                if (TARGET PkgConfig::SDL2)
+                    set(REACTCPP_SDL_IMPORTED_TARGET PkgConfig::SDL2)
+                else()
+                    set(REACTCPP_SDL_LIBRARIES ${SDL2_LIBRARIES})
+                endif()
             endif()
         endif()
     endif()
@@ -259,6 +267,34 @@ add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
                 set(REACTCPP_SDL_FOUND ON)
                 set(REACTCPP_SDL_INCLUDE_DIRS "${SDL2_INCLUDE_DIR}")
                 set(REACTCPP_SDL_LIBRARIES "${SDL2_LIBRARY}")
+            endif()
+        endif()
+    endif()
+
+    if (NOT REACTCPP_SDL_IMPORTED_TARGET AND REACTCPP_SDL_FOUND)
+        set(_SDL_LIBRARY_PATHS
+            /opt/homebrew/lib
+            /usr/local/lib
+            /usr/lib
+            ${CMAKE_PREFIX_PATH}
+        )
+        if (REACTCPP_SDL_INCLUDE_DIRS MATCHES "/SDL3/")
+            find_library(_SDL3_ABS_LIBRARY
+                NAMES SDL3 SDL3.0 SDL3.0.0 SDL3-0 SDL3-1.0
+                PATHS ${_SDL_LIBRARY_PATHS}
+                PATH_SUFFIXES lib Frameworks
+            )
+            if (_SDL3_ABS_LIBRARY)
+                set(REACTCPP_SDL_LIBRARIES "${_SDL3_ABS_LIBRARY}")
+            endif()
+        elseif (REACTCPP_SDL_INCLUDE_DIRS MATCHES "/SDL2/")
+            find_library(_SDL2_ABS_LIBRARY
+                NAMES SDL2 SDL2-2.0
+                PATHS ${_SDL_LIBRARY_PATHS}
+                PATH_SUFFIXES lib Frameworks
+            )
+            if (_SDL2_ABS_LIBRARY)
+                set(REACTCPP_SDL_LIBRARIES "${_SDL2_ABS_LIBRARY}")
             endif()
         endif()
     endif()
