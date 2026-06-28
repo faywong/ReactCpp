@@ -202,15 +202,42 @@ add_subdirectory("${yoga_SOURCE_DIR}/yoga" "${yoga_BINARY_DIR}/yoga")
 
     if (NOT REACTCPP_SDL_FOUND)
         # Manual fallback (common on distros without pkg-config/.pc or CMake package config files)
-        find_path(SDL3_INCLUDE_DIR NAMES SDL3/SDL.h)
-        find_library(SDL3_LIBRARY NAMES SDL3 SDL3-0 SDL3-1.0)
+        set(REACTCPP_SDL3_PREFIXES
+            ${CMAKE_PREFIX_PATH}
+            /opt/homebrew
+            /usr/local
+            /usr
+        )
+
+        find_path(SDL3_INCLUDE_DIR
+            NAMES SDL3/SDL.h
+            HINTS
+            ${REACTCPP_SDL3_PREFIXES}
+            PATH_SUFFIXES include
+        )
+        find_library(SDL3_LIBRARY
+            NAMES SDL3 SDL3-0 SDL3-1.0
+            HINTS
+            ${REACTCPP_SDL3_PREFIXES}
+            PATH_SUFFIXES lib
+        )
         if (SDL3_INCLUDE_DIR AND SDL3_LIBRARY)
             set(REACTCPP_SDL_FOUND ON)
             set(REACTCPP_SDL_INCLUDE_DIRS "${SDL3_INCLUDE_DIR}")
             set(REACTCPP_SDL_LIBRARIES "${SDL3_LIBRARY}")
         else()
-            find_path(SDL2_INCLUDE_DIR NAMES SDL2/SDL.h)
-            find_library(SDL2_LIBRARY NAMES SDL2 SDL2-2.0)
+            find_path(SDL2_INCLUDE_DIR
+                NAMES SDL2/SDL.h
+                HINTS
+                ${REACTCPP_SDL3_PREFIXES}
+                PATH_SUFFIXES include
+            )
+            find_library(SDL2_LIBRARY
+                NAMES SDL2 SDL2-2.0
+                HINTS
+                ${REACTCPP_SDL3_PREFIXES}
+                PATH_SUFFIXES lib
+            )
             if (SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
                 set(REACTCPP_SDL_FOUND ON)
                 set(REACTCPP_SDL_INCLUDE_DIRS "${SDL2_INCLUDE_DIR}")
