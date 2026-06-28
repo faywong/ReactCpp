@@ -170,8 +170,6 @@ Charts demo (live streaming + themes + layout):
 
 ![Charts demo animation](docs/images/charts-demo.webp)
 
-([Download the charts demo video (webm)](docs/images/charts-demo.webm))
-
 ### Context menu copy
 
 The runtime includes a small Skia-rendered context menu overlay. Right-click any hit-tested element and choose Copy to write text-like content to the system clipboard:
