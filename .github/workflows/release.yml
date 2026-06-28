@@ -94,7 +94,7 @@ jobs:
       - name: Install macOS dependencies
         if: matrix.platform == 'macos'
         run: |
-          brew install pkg-config
+          brew install pkg-config sdl3
 
       - name: Prepare Skia SDK from latest daily artifact
         shell: bash
@@ -109,7 +109,7 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/usr/local -DREACTCPP_BUILD_DEMO=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="/opt/homebrew;/usr/local" -DREACTCPP_BUILD_DEMO=ON
 
       - name: Build runtime library and demo
         run: |
