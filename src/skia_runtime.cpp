@@ -3,13 +3,14 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <cctype>
+#include <fstream>
 #include <iomanip>
-#include <limits>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -70,6 +71,15 @@
 #include <SDL3/SDL_opengl.h>
 
 #include "render_thread.hpp"
+
+#include "rive/animation/state_machine_input_instance.hpp"
+#include "rive/animation/state_machine_instance.hpp"
+#include "rive/artboard.hpp"
+#include "rive/file.hpp"
+#include "rive/static_scene.hpp"
+#include "rive/viewmodel/viewmodel_instance.hpp"
+#include "skia_factory.hpp"
+#include "skia_renderer.hpp"
 
 
 #define REACTCPP_SDL_EVENT_QUIT SDL_EVENT_QUIT
@@ -147,6 +157,190 @@ thread_local sk_sp<SkFontMgr> g_font_mgr;
 static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>&);
 static SkColor make_color(float r, float g, float b, float a);
 static void draw_chart_empty_message(SkCanvas* canvas, const DrawContext& ctx, const LayoutRect& plot, const char* text);
+
+struct RivePlayerDrawData {
+    reactcpp::RiveInputs::Snapshot inputs;
+    std::string error;
+    bool rendered{false};
+};
+
+struct RiveRuntimeState {
+    std::string source;
+    std::string artboard_name;
+    std::string state_machine_name;
+    rive::rcp<rive::File> file;
+    std::unique_ptr<rive::ArtboardInstance> artboard;
+    std::unique_ptr<rive::Scene> scene;
+    rive::rcp<rive::ViewModelInstance> view_model_instance;
+    rive::SkiaFactory factory;
+    std::chrono::steady_clock::time_point last_advance{};
+    bool wants_repaint{false};
+    std::string error;
+};
+
+static std::vector<std::uint8_t> read_binary_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    if (size <= 0) {
+        return {};
+    }
+    in.seekg(0, std::ios::beg);
+    std::vector<std::uint8_t> out(static_cast<std::size_t>(size));
+    in.read(reinterpret_cast<char*>(out.data()), size);
+    if (!in) {
+        return {};
+    }
+    return out;
+}
+
+static RiveRuntimeState* rive_state_for(const InstanceNode& node) {
+    return static_cast<RiveRuntimeState*>(node.native_state.get());
+}
+
+static std::shared_ptr<RiveRuntimeState> ensure_rive_state(const InstanceNode& node, const RivePlayerProps& props) {
+    auto state = std::static_pointer_cast<RiveRuntimeState>(node.native_state);
+    const bool matches = state
+        && state->source == props.source
+        && state->artboard_name == props.artboard
+        && state->state_machine_name == props.state_machine;
+    if (matches) {
+        return state;
+    }
+
+    state = std::make_shared<RiveRuntimeState>();
+    state->source = props.source;
+    state->artboard_name = props.artboard;
+    state->state_machine_name = props.state_machine;
+    node.native_state = state;
+
+    if (props.source.empty()) {
+        state->error = "RivePlayer: source is empty";
+        return state;
+    }
+
+    std::vector<std::uint8_t> bytes = read_binary_file(props.source);
+    if (bytes.empty()) {
+        state->error = "RivePlayer: could not read " + props.source;
+        return state;
+    }
+
+    rive::ImportResult result = rive::ImportResult::malformed;
+    state->file = rive::File::import(bytes, &state->factory, &result);
+    if (!state->file || result != rive::ImportResult::success) {
+        state->error = "RivePlayer: import failed for " + props.source;
+        return state;
+    }
+
+    state->artboard = props.artboard.empty()
+        ? state->file->artboardDefault()
+        : state->file->artboardNamed(props.artboard);
+    if (!state->artboard) {
+        state->error = "RivePlayer: artboard not found";
+        return state;
+    }
+
+    state->view_model_instance = state->file->createViewModelInstance(state->artboard.get());
+    if (state->view_model_instance) {
+        state->artboard->bindViewModelInstance(state->view_model_instance);
+    }
+
+    state->scene = props.state_machine.empty()
+        ? state->artboard->defaultStateMachine()
+        : state->artboard->stateMachineNamed(props.state_machine);
+    if (!state->scene && state->artboard->stateMachineCount() > 0) {
+        state->scene = state->artboard->stateMachineAt(0);
+    }
+    if (!state->scene) {
+        state->scene = std::make_unique<rive::StaticScene>(state->artboard.get());
+    }
+    if (state->scene && state->view_model_instance) {
+        state->scene->bindViewModelInstance(state->view_model_instance);
+    }
+
+    state->artboard->advance(0.0f);
+    if (state->scene) {
+        state->wants_repaint = state->scene->advanceAndApply(0.0f);
+    }
+    state->last_advance = std::chrono::steady_clock::now();
+    return state;
+}
+
+static bool rive_player_wants_repaint(const InstanceNode& node) {
+    if (node.type != host_type_rive_player()) {
+        return false;
+    }
+    const auto* state = rive_state_for(node);
+    return state && state->wants_repaint;
+}
+
+static void apply_rive_inputs(rive::Scene* scene, const reactcpp::RiveInputs::Snapshot& inputs) {
+    if (!scene) {
+        return;
+    }
+    for (const auto& [name, value] : inputs.numbers) {
+        if (auto* input = scene->getNumber(name)) {
+            input->value(static_cast<float>(value));
+        }
+    }
+    for (const auto& [name, value] : inputs.bools) {
+        if (auto* input = scene->getBool(name)) {
+            input->value(value);
+        }
+    }
+}
+
+static bool draw_rive_backend(
+    const InstanceNode& node,
+    const RivePlayerProps& props,
+    SkCanvas* canvas,
+    const LayoutRect& r,
+    RivePlayerDrawData& data
+) {
+    auto state = ensure_rive_state(node, props);
+    if (!state || !state->artboard || !state->scene || !state->error.empty()) {
+        data.error = state ? state->error : "RivePlayer: failed to create runtime state";
+        return false;
+    }
+
+    apply_rive_inputs(state->scene.get(), data.inputs);
+
+    const auto now = std::chrono::steady_clock::now();
+    double dt = 0.0;
+    if (state->last_advance.time_since_epoch().count() != 0) {
+        dt = std::chrono::duration<double>(now - state->last_advance).count();
+    }
+    state->last_advance = now;
+    dt = std::clamp(dt * data.inputs.time_scale, 0.0, 0.25);
+
+    bool keep_animating = false;
+    keep_animating = state->scene->advanceAndApply(static_cast<float>(dt));
+
+    const float art_w = std::max(state->scene->width(), 1.0f);
+    const float art_h = std::max(state->scene->height(), 1.0f);
+    const float scale = std::min(r.width / art_w, r.height / art_h);
+    const float draw_w = art_w * scale;
+    const float draw_h = art_h * scale;
+    const float dx = (r.width - draw_w) * 0.5f;
+    const float dy = (r.height - draw_h) * 0.5f;
+
+    canvas->save();
+    canvas->translate(dx, dy);
+    canvas->scale(scale, scale);
+    rive::SkiaRenderer renderer(canvas);
+    state->scene->draw(&renderer);
+    canvas->restore();
+
+    state->wants_repaint = keep_animating;
+    if (state->wants_repaint) {
+        reactcpp::request_repaint();
+    }
+    data.rendered = true;
+    return true;
+}
 
 static bool is_finite_double(double v) {
     return std::isfinite(v);
@@ -2567,6 +2761,79 @@ public:
     }
 };
 
+class RivePlayerRenderer final : public ElementRenderer {
+public:
+    void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
+        const auto& props = std::get<RivePlayerProps>(node.current_vnode.props);
+        const LayoutRect r = layout_for_node(node);
+        draw_chart_background(canvas, r, props);
+        if (r.width <= 1.0f || r.height <= 1.0f) return;
+
+        RivePlayerDrawData data;
+        data.inputs.time_scale = props.time_scale;
+        data.inputs.numbers = props.number_inputs;
+        data.inputs.bools = props.bool_inputs;
+        data.inputs.revision = props.inputs_revision;
+        if (props.inputs_source) {
+            data.inputs = props.inputs_source->snapshot();
+        }
+
+        if (draw_rive_backend(node, props, canvas, r, data)) {
+            return;
+        }
+
+        SkPaint panel;
+        panel.setAntiAlias(true);
+        panel.setStyle(SkPaint::kFill_Style);
+        panel.setColor(static_cast<SkColor>(0xFFF8FAFC));
+        canvas->drawRoundRect(SkRect::MakeXYWH(8.0f, 8.0f, std::max(1.0f, r.width - 16.0f), std::max(1.0f, r.height - 16.0f)), 10.0f, 10.0f, panel);
+
+        SkPaint stroke;
+        stroke.setAntiAlias(true);
+        stroke.setStyle(SkPaint::kStroke_Style);
+        stroke.setStrokeWidth(1.0f);
+        stroke.setColor(static_cast<SkColor>(0xFFCBD5E1));
+        canvas->drawRoundRect(SkRect::MakeXYWH(8.0f, 8.0f, std::max(1.0f, r.width - 16.0f), std::max(1.0f, r.height - 16.0f)), 10.0f, 10.0f, stroke);
+
+        SkPaint title_paint;
+        title_paint.setAntiAlias(true);
+        title_paint.setColor(static_cast<SkColor>(0xFF0F172A));
+        SkFont title_font;
+        title_font.setTypeface(pick_typeface(ctx.font_mgr));
+        title_font.setSize(18.0f);
+
+        const std::string title = props.source.empty() ? "RivePlayer" : ("RivePlayer: " + props.source);
+        canvas->drawString(title.c_str(), 20.0f, 34.0f, title_font, title_paint);
+
+        SkPaint text_paint;
+        text_paint.setAntiAlias(true);
+        text_paint.setColor(static_cast<SkColor>(0xFF334155));
+        SkFont text_font;
+        text_font.setTypeface(pick_typeface(ctx.font_mgr));
+        text_font.setSize(13.0f);
+
+        float y = 58.0f;
+        auto draw_line = [&](const std::string& s) {
+            if (y > r.height - 16.0f) return;
+            canvas->drawString(s.c_str(), 20.0f, y, text_font, text_paint);
+            y += 19.0f;
+        };
+
+        if (!data.error.empty()) {
+            draw_line(data.error);
+        }
+        if (!props.artboard.empty()) draw_line("artboard: " + props.artboard);
+        if (!props.state_machine.empty()) draw_line("state machine: " + props.state_machine);
+        draw_line("time_scale: " + trim_chart_value_zeros(std::to_string(data.inputs.time_scale)));
+        for (const auto& [name, value] : data.inputs.numbers) {
+            draw_line(name + ": " + trim_chart_value_zeros(std::to_string(value)));
+        }
+        for (const auto& [name, value] : data.inputs.bools) {
+            draw_line(name + ": " + std::string(value ? "true" : "false"));
+        }
+    }
+};
+
 static const ElementRenderer& renderer_for(TypeId type) {
     static ViewRenderer view_renderer;
     static ButtonRenderer button_renderer;
@@ -2574,6 +2841,7 @@ static const ElementRenderer& renderer_for(TypeId type) {
     static InputRenderer input_renderer;
     static InputAreaRenderer input_area_renderer;
     static CanvasRenderer canvas_renderer;
+    static RivePlayerRenderer rive_player_renderer;
     static LineChartRenderer line_chart_renderer;
     static ScatterChartRenderer scatter_chart_renderer;
     static AreaChartRenderer area_chart_renderer;
@@ -2587,6 +2855,7 @@ static const ElementRenderer& renderer_for(TypeId type) {
     if (type == host_type_input()) return input_renderer;
     if (type == host_type_input_area()) return input_area_renderer;
     if (type == host_type_canvas()) return canvas_renderer;
+    if (type == host_type_rive_player()) return rive_player_renderer;
     if (type == host_type_line_chart()) return line_chart_renderer;
     if (type == host_type_scatter_chart()) return scatter_chart_renderer;
     if (type == host_type_area_chart()) return area_chart_renderer;
@@ -2801,9 +3070,13 @@ public:
 
     void perform_update_if_needed() {
         const bool repaint_requested = take_runtime_repaint_request();
-        if (!update_requested_ && !repaint_requested) return;
-        update_requested_ = false;
-        (void)render_frame();
+        if (update_requested_) {
+            update_requested_ = false;
+            (void)render_frame();
+            return;
+        }
+        if (!repaint_requested) return;
+        refresh_data_driven_nodes(root_instance_);
     }
 
     void draw(SkCanvas* canvas, int width, int height) {
@@ -3372,6 +3645,8 @@ private:
                 }
             } else if constexpr (std::is_same_v<P, CanvasProps>) {
                 out += props.drawio_xml;
+            } else if constexpr (std::is_same_v<P, RivePlayerProps>) {
+                out += props.source;
             }
         }, node.current_vnode.props);
 
@@ -4215,6 +4490,7 @@ private:
             }
             inst.children.clear();
             inst.cached_picture.reset();
+            inst.native_state.reset();
             inst.dirty = true;
             inst.focused = false;
             init_node_state(inst);
@@ -4250,8 +4526,89 @@ private:
         if (local_changed || vnode.dirty) {
             inst.dirty = true;
             inst.cached_picture.reset();
+            if (inst.type == host_type_rive_player()) {
+                inst.native_state.reset();
+            }
         }
         return local_changed;
+    }
+
+    static bool refresh_data_driven_props(ElementProps& props) {
+        bool changed = false;
+        std::visit([&](auto& p) {
+            using P = std::decay_t<decltype(p)>;
+            if constexpr (std::is_same_v<P, LineChartProps>
+                       || std::is_same_v<P, ScatterChartProps>
+                       || std::is_same_v<P, AreaChartProps>) {
+                if (p.points_source) {
+                    const std::size_t revision = p.points_source->revision();
+                    if (p.data_revision != revision) {
+                        p.data_revision = revision;
+                        changed = true;
+                    }
+                }
+            } else if constexpr (std::is_same_v<P, BarChartProps>) {
+                std::size_t revision = 0;
+                if (p.values_source) {
+                    revision = p.values_source->revision();
+                }
+                if (p.x_source) {
+                    revision ^= p.x_source->revision();
+                }
+                if ((p.values_source || p.x_source) && p.data_revision != revision) {
+                    p.data_revision = revision;
+                    changed = true;
+                }
+            } else if constexpr (std::is_same_v<P, CircleChartProps>) {
+                if (p.x_source) {
+                    const std::size_t revision = p.x_source->revision();
+                    if (p.x_revision != revision) {
+                        p.x_revision = revision;
+                        changed = true;
+                    }
+                }
+                if (p.y_source) {
+                    const std::size_t revision = p.y_source->revision();
+                    if (p.y_revision != revision) {
+                        p.y_revision = revision;
+                        changed = true;
+                    }
+                }
+                if (p.radius_source) {
+                    const std::size_t revision = p.radius_source->revision();
+                    if (p.r_revision != revision) {
+                        p.r_revision = revision;
+                        changed = true;
+                    }
+                }
+            } else if constexpr (std::is_same_v<P, HistogramChartProps>) {
+                if (p.samples_source) {
+                    const std::size_t revision = p.samples_source->revision();
+                    if (p.data_revision != revision) {
+                        p.data_revision = revision;
+                        changed = true;
+                    }
+                }
+            } else if constexpr (std::is_same_v<P, RivePlayerProps>) {
+                if (p.inputs_source) {
+                    const std::size_t revision = p.inputs_source->revision();
+                    if (p.inputs_revision != revision) {
+                        p.inputs_revision = revision;
+                        changed = true;
+                    }
+                }
+            }
+        }, props);
+        return changed;
+    }
+
+    void refresh_data_driven_nodes(InstanceNode& node) {
+        if (refresh_data_driven_props(node.current_vnode.props) || rive_player_wants_repaint(node)) {
+            mark_dirty(&node);
+        }
+        for (auto& child : node.children) {
+            refresh_data_driven_nodes(*child);
+        }
     }
 
     static SkRect local_recording_bounds(const Element& vnode) {
@@ -4367,6 +4724,11 @@ TypeId host_type_canvas() {
     return &dummy;
 }
 
+TypeId host_type_rive_player() {
+    static int dummy;
+    return &dummy;
+}
+
 TypeId host_type_line_chart() {
     static int dummy;
     return &dummy;
@@ -4437,6 +4799,13 @@ Element InputArea(const InputAreaProps& props, std::vector<Element> children) {
 Element Canvas(const CanvasProps& props) {
     Element e;
     e.type = host_type_canvas();
+    e.props = props;
+    return e;
+}
+
+Element RivePlayer(const RivePlayerProps& props) {
+    Element e;
+    e.type = host_type_rive_player();
     e.props = props;
     return e;
 }

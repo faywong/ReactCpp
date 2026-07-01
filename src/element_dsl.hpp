@@ -710,6 +710,92 @@ public:
     }
 };
 
+class RivePlayerNode final : public ViewLikeNode<RivePlayerNode, RivePlayerProps> {
+public:
+    RivePlayerNode& source(std::string v) & {
+        props_.source = std::move(v);
+        return *this;
+    }
+    RivePlayerNode&& source(std::string v) && {
+        props_.source = std::move(v);
+        return std::move(*this);
+    }
+
+    RivePlayerNode& artboard(std::string v) & {
+        props_.artboard = std::move(v);
+        return *this;
+    }
+    RivePlayerNode&& artboard(std::string v) && {
+        props_.artboard = std::move(v);
+        return std::move(*this);
+    }
+
+    RivePlayerNode& state_machine(std::string v) & {
+        props_.state_machine = std::move(v);
+        return *this;
+    }
+    RivePlayerNode&& state_machine(std::string v) && {
+        props_.state_machine = std::move(v);
+        return std::move(*this);
+    }
+
+    RivePlayerNode& inputs(std::shared_ptr<const reactcpp::RiveInputs> source) & {
+        props_.inputs_source = std::move(source);
+        props_.inputs_revision = props_.inputs_source ? props_.inputs_source->revision() : 0;
+        return *this;
+    }
+    RivePlayerNode&& inputs(std::shared_ptr<const reactcpp::RiveInputs> source) && {
+        props_.inputs_source = std::move(source);
+        props_.inputs_revision = props_.inputs_source ? props_.inputs_source->revision() : 0;
+        return std::move(*this);
+    }
+
+    RivePlayerNode& number(std::string name, double value) & {
+        props_.number_inputs[std::move(name)] = value;
+        props_.inputs_source.reset();
+        props_.inputs_revision = 0;
+        return *this;
+    }
+    RivePlayerNode&& number(std::string name, double value) && {
+        props_.number_inputs[std::move(name)] = value;
+        props_.inputs_source.reset();
+        props_.inputs_revision = 0;
+        return std::move(*this);
+    }
+
+    RivePlayerNode& boolean(std::string name, bool value) & {
+        props_.bool_inputs[std::move(name)] = value;
+        props_.inputs_source.reset();
+        props_.inputs_revision = 0;
+        return *this;
+    }
+    RivePlayerNode&& boolean(std::string name, bool value) && {
+        props_.bool_inputs[std::move(name)] = value;
+        props_.inputs_source.reset();
+        props_.inputs_revision = 0;
+        return std::move(*this);
+    }
+
+    RivePlayerNode& time_scale(double value) & {
+        props_.time_scale = value;
+        return *this;
+    }
+    RivePlayerNode&& time_scale(double value) && {
+        props_.time_scale = value;
+        return std::move(*this);
+    }
+
+    Element build() const & {
+        return RivePlayer(props_);
+    }
+    Element build() && {
+        return RivePlayer(props_);
+    }
+    operator Element() && {
+        return std::move(*this).build();
+    }
+};
+
 class LineChartNode final : public ChartStyleNode<LineChartNode, LineChartProps> {
 public:
     LineChartNode& data(std::vector<reactcpp::LinePoint> v) & {
@@ -1348,6 +1434,10 @@ inline InputAreaNode input_area() {
 
 inline CanvasNode canvas() {
     return CanvasNode{};
+}
+
+inline RivePlayerNode rive_player() {
+    return RivePlayerNode{};
 }
 
 inline LineChartNode line_chart() {

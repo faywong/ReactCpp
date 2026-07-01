@@ -1,5 +1,6 @@
 #include "element_dsl.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -35,6 +36,8 @@ struct LiveChartData {
         std::make_shared<reactcpp::VectorDataSource<double>>();
     std::shared_ptr<reactcpp::VectorDataSource<double>> histogram_samples =
         std::make_shared<reactcpp::VectorDataSource<double>>();
+    std::shared_ptr<reactcpp::RiveInputs> process_animation =
+        std::make_shared<reactcpp::RiveInputs>();
 
     std::atomic<bool> started{false};
     std::jthread worker;
@@ -82,6 +85,12 @@ struct LiveChartData {
                 circle_y->push_back(std::cos(x * 0.06 + t) * 8.0 + 18.0);
                 circle_r->push_back(2.0 + std::fmod(std::fabs(std::sin(static_cast<double>(tick) * 0.15 + t * 0.7)) * 6.0, 1.0) * 2.0);
                 histogram_samples->push_back(hist_noise(rng));
+
+                const double flow_rate = std::fabs(std::sin(t * 0.9)) * 100.0;
+                process_animation->set_number("temperature", 68.0 + std::sin(t * 0.33) * 24.0);
+                process_animation->set_number("flow_rate", flow_rate);
+                process_animation->set_bool("is_error", std::fmod(static_cast<double>(tick), 97.0) > 88.0);
+                process_animation->set_time_scale(std::max(0.1, flow_rate / 100.0));
 
                 ++tick;
                 std::this_thread::sleep_for(std::chrono::milliseconds(80));
@@ -255,6 +264,15 @@ Element AppRoot() {
             .margin(6.0f)
             .value("Charts powered by VectorDataSource + request_repaint (live)")
             .text_size(18.0f),
+
+        rive_player()
+            .margin(6.0f)
+            .size(900.0f, 170.0f)
+            .bg(1.0f, 1.0f, 1.0f)
+            .source("assets/hmi/boiler_process.riv")
+            .artboard("BoilerProcess")
+            .state_machine("SCADA")
+            .inputs(charts.process_animation),
 
         line_chart()
             .margin(6.0f)

@@ -420,8 +420,8 @@ endif()
         set(SKIA_LIB_PATH_DEFAULT "${SKIA_LIB_DIR}/libskia.a")
     endif()
 
-    set(SKIA_LIB_PATH "${SKIA_LIB_PATH_DEFAULT}" CACHE FILEPATH "Path to Skia library")
-    set(SKIA_SKCMS_LIB_PATH "${SKIA_LIB_DIR}/libskcms.a" CACHE FILEPATH "Path to skcms static library (libskcms.a), if present")
+    set(SKIA_LIB_PATH "${SKIA_LIB_PATH_DEFAULT}")
+    set(SKIA_SKCMS_LIB_PATH "${SKIA_LIB_DIR}/libskcms.a")
 
 if (NOT EXISTS "${SKIA_LIB_PATH}")
     message(FATAL_ERROR "Skia static library not found at ${SKIA_LIB_PATH}")
@@ -460,6 +460,196 @@ target_include_directories(react_cpp_skia_runtime_ime_area_scroll_tests
         "${SKIA_ROOT}/include"
         "${SKIA_ROOT}"
 )
+
+set(RIVE_RUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rive-runtime")
+if (NOT EXISTS "${RIVE_RUNTIME_ROOT}/include/rive/file.hpp")
+    message(FATAL_ERROR
+        "Rive runtime submodule is missing at ${RIVE_RUNTIME_ROOT}. "
+        "Run: git submodule update --init --recursive"
+    )
+endif()
+
+file(GLOB_RECURSE REACTCPP_RIVE_RUNTIME_SOURCES CONFIGURE_DEPENDS
+    "${RIVE_RUNTIME_ROOT}/src/*.cpp"
+)
+list(FILTER REACTCPP_RIVE_RUNTIME_SOURCES EXCLUDE REGEX "/src/lua/")
+list(FILTER REACTCPP_RIVE_RUNTIME_SOURCES EXCLUDE REGEX "/src/audio/")
+list(FILTER REACTCPP_RIVE_RUNTIME_SOURCES EXCLUDE REGEX "/src/text/font_hb")
+list(FILTER REACTCPP_RIVE_RUNTIME_SOURCES EXCLUDE REGEX "/src/text/line_breaker")
+list(FILTER REACTCPP_RIVE_RUNTIME_SOURCES EXCLUDE REGEX "/src/text/fully_shaped_text")
+
+set(REACTCPP_RIVE_SKIA_COMPAT_DIR "${CMAKE_CURRENT_BINARY_DIR}/rive-skia-compat")
+file(MAKE_DIRECTORY "${REACTCPP_RIVE_SKIA_COMPAT_DIR}")
+
+file(READ "${RIVE_RUNTIME_ROOT}/skia/renderer/include/to_skia.hpp" REACTCPP_RIVE_TO_SKIA_HPP)
+string(REPLACE
+    "return SkPath::Make((const SkPoint*)pts.data(), pts.size(),\n                                vbs.data(), math::lossless_numeric_cast<int>(vbs.size()),\n                                nullptr, 0, SkPathFillType::kWinding);"
+    "return SkPath::Make({(const SkPoint*)pts.data(), pts.size()},\n                                {vbs.data(), vbs.size()},\n                                {}, SkPathFillType::kWinding);"
+    REACTCPP_RIVE_TO_SKIA_HPP
+    "${REACTCPP_RIVE_TO_SKIA_HPP}"
+)
+file(WRITE "${REACTCPP_RIVE_SKIA_COMPAT_DIR}/to_skia.hpp" "${REACTCPP_RIVE_TO_SKIA_HPP}")
+
+file(READ "${RIVE_RUNTIME_ROOT}/skia/renderer/src/skia_factory.cpp" REACTCPP_RIVE_SKIA_FACTORY_CPP)
+string(REPLACE
+    "#include \"include/core/SkPath.h\""
+    "#include \"include/core/SkPath.h\"\n#include \"include/core/SkPathBuilder.h\""
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "private:\n    SkPath m_Path;\n\npublic:\n    SkiaRenderPath() {}\n    SkiaRenderPath(SkPath&& path) : m_Path(std::move(path)) {}\n\n    const SkPath& path() const { return m_Path; }"
+    "private:\n    SkPathBuilder m_Builder;\n    mutable SkPath m_Path;\n\npublic:\n    SkiaRenderPath() {}\n    SkiaRenderPath(SkPath&& path) : m_Builder(path), m_Path(std::move(path)) {}\n\n    const SkPath& path() const { m_Path = m_Builder.snapshot(); return m_Path; }"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "m_Path.setFillType(ToSkia::convert(value));"
+    "m_Builder.setFillType(ToSkia::convert(value));"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "auto fillType = m_Path.getFillType();\n    m_Path.rewind();\n    m_Path.setFillType(fillType);"
+    "auto fillType = m_Builder.fillType();\n    m_Builder.reset();\n    m_Builder.setFillType(fillType);"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "m_Path.addPath(skPath->m_Path, ToSkia::convert(transform));"
+    "m_Builder.addPath(skPath->path(), ToSkia::convert(transform));"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "SkPath::Make(reinterpret_cast<const SkPoint*>(path.points().data()),\n                     path.points().size(),\n                     (uint8_t*)path.verbs().data(),\n                     path.verbs().size(),\n                     conicWeights,\n                     conicWeightCount,\n                     m_Path.getFillType(),\n                     isVolatile);"
+    "SkPath::Make({reinterpret_cast<const SkPoint*>(path.points().data()), path.points().size()},\n                     {(uint8_t*)path.verbs().data(), path.verbs().size()},\n                     {conicWeights, static_cast<size_t>(conicWeightCount)},\n                     m_Path.getFillType(),\n                     isVolatile);"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "m_Path.getFillType(),"
+    "m_Builder.fillType(),"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "m_Path.addPath(skPath);"
+    "m_Builder.addPath(skPath);"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "void SkiaRenderPath::moveTo(float x, float y) { m_Path.moveTo(x, y); }\nvoid SkiaRenderPath::lineTo(float x, float y) { m_Path.lineTo(x, y); }"
+    "void SkiaRenderPath::moveTo(float x, float y) { m_Builder.moveTo(x, y); }\nvoid SkiaRenderPath::lineTo(float x, float y) { m_Builder.lineTo(x, y); }"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "m_Path.cubicTo(ox, oy, ix, iy, x, y);"
+    "m_Builder.cubicTo(ox, oy, ix, iy, x, y);"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "void SkiaRenderPath::close() { m_Path.close(); }"
+    "void SkiaRenderPath::close() { m_Builder.close(); }"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "SkPath::Make(reinterpret_cast<const SkPoint*>(rawPath.points().data()),\n                     rawPath.points().size(),\n                     (uint8_t*)rawPath.verbs().data(),\n                     rawPath.verbs().size(),\n                     conicWeights,\n                     conicWeightCount,\n                     ToSkia::convert(fillRule),\n                     isVolatile));"
+    "SkPath::Make({reinterpret_cast<const SkPoint*>(rawPath.points().data()), rawPath.points().size()},\n                     {(uint8_t*)rawPath.verbs().data(), rawPath.verbs().size()},\n                     {conicWeights, static_cast<size_t>(conicWeightCount)},\n                     ToSkia::convert(fillRule),\n                     isVolatile));"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "SkImage::MakeFromEncoded(data)"
+    "SkImages::DeferredFromEncodedData(data)"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+string(REPLACE
+    "SkImage::MakeRasterCopy({skinfo, pixels.data(), info.rowBytes})"
+    "SkImages::RasterFromPixmapCopy(SkPixmap(skinfo, pixels.data(), info.rowBytes))"
+    REACTCPP_RIVE_SKIA_FACTORY_CPP
+    "${REACTCPP_RIVE_SKIA_FACTORY_CPP}"
+)
+file(WRITE "${REACTCPP_RIVE_SKIA_COMPAT_DIR}/skia_factory.cpp" "${REACTCPP_RIVE_SKIA_FACTORY_CPP}")
+
+set(REACTCPP_RIVE_SKIA_RENDERER_SOURCES
+    "${REACTCPP_RIVE_SKIA_COMPAT_DIR}/skia_factory.cpp"
+)
+
+add_library(reactcpp_rive_objects OBJECT
+    ${REACTCPP_RIVE_RUNTIME_SOURCES}
+    ${REACTCPP_RIVE_SKIA_RENDERER_SOURCES}
+)
+
+set_target_properties(reactcpp_rive_objects
+    PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+)
+
+target_compile_definitions(reactcpp_rive_objects
+    PRIVATE
+        _RIVE_INTERNAL_
+        YOGA_EXPORT=
+)
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(reactcpp_rive_objects
+        PRIVATE
+            -Wno-deprecated-declarations
+    )
+endif()
+
+target_include_directories(reactcpp_rive_objects
+    PRIVATE
+        "${REACTCPP_RIVE_SKIA_COMPAT_DIR}"
+        "${RIVE_RUNTIME_ROOT}/include"
+        "${RIVE_RUNTIME_ROOT}/dependencies"
+        "${RIVE_RUNTIME_ROOT}/skia/renderer/include"
+        "${RIVE_RUNTIME_ROOT}/cg_renderer/include"
+        "${SKIA_ROOT}"
+        "${SKIA_ROOT}/include"
+)
+
+function(reactcpp_attach_rive_sources target_name)
+    target_sources(${target_name}
+        PRIVATE
+            $<TARGET_OBJECTS:reactcpp_rive_objects>
+    )
+
+    target_compile_definitions(${target_name}
+        PRIVATE
+            _RIVE_INTERNAL_
+            YOGA_EXPORT=
+    )
+
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        target_compile_options(${target_name}
+            PRIVATE
+                -Wno-deprecated-declarations
+        )
+    endif()
+
+    target_include_directories(${target_name}
+        PRIVATE
+            "${REACTCPP_RIVE_SKIA_COMPAT_DIR}"
+            "${RIVE_RUNTIME_ROOT}/include"
+            "${RIVE_RUNTIME_ROOT}/dependencies"
+            "${RIVE_RUNTIME_ROOT}/skia/renderer/include"
+            "${RIVE_RUNTIME_ROOT}/cg_renderer/include"
+            "${SKIA_ROOT}"
+            "${SKIA_ROOT}/include"
+    )
+endfunction()
+
+reactcpp_attach_rive_sources(reactcpp)
+reactcpp_attach_rive_sources(react_cpp_skia_runtime_input_area_enter_tests)
+reactcpp_attach_rive_sources(react_cpp_skia_runtime_frame_retention_tests)
+reactcpp_attach_rive_sources(react_cpp_skia_runtime_ime_area_scroll_tests)
 
 target_link_libraries(reactcpp_demo
     PRIVATE

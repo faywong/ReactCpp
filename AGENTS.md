@@ -62,6 +62,7 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 | Declarative UI authoring DSL helpers    | `src/element_dsl.hpp` | Fluent builder DSL under `reactcpp::ui` to make element trees structure-first. |
 | SDL3 + Skia + Yoga runtime              | `src/skia_runtime.*` | SDL3 event loop + Skia rendering + Yoga flexbox layout. |
 | Draw.io canvas component                | `src/skia_runtime.*`, `src/element_dsl.hpp` | `CanvasProps`/`canvas()` render a basic draw.io `mxGraphModel` subset through Skia. |
+| RivePlayer component                    | `src/skia_runtime.*`, `src/element_dsl.hpp` | `RivePlayerProps`/`rive_player()` expose a SCADA/HMI animation host with `RiveInputs` for direct data-driven repaint. |
 | Legacy console reconciler               | `src/runtime.*`   | Older PoC kept for reference; not used by the SDL/Skia demo. |
 | Skia SDK setup                          | `scripts/skia/setup_skia_sdk.py` | Installs latest CI artifact via `gh` or builds locally. |
 | Skia SDK build internals                | `scripts/skia/build_skia_sdk.py` | Builds/packages the Skia profile into `.reactcpp/skia-sdk/<platform>-<arch>`. |
@@ -178,6 +179,7 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
   - Output layout: `.reactcpp/skia-sdk/<platform>-<arch>/{lib,skia/include,skia-sdk.json}`.
 - `CMakeLists.txt` searches `SKIA_SDK_ROOT` or the default `.reactcpp/skia-sdk/<platform>-<arch>` path and fails configuration if the Skia SDK is missing while the demo is enabled.
 - `.github/workflows/skia-sdk-daily.yml` builds daily/manual SDK artifacts for Linux x64, macOS arm64, and Windows x64.
+- Rive support is built in through the `third_party/rive-runtime` git submodule, pinned to upstream `rive-app/rive-runtime`. There is no compile switch and no separate Rive static/shared library: CMake compiles the required Rive runtime and Skia renderer `.cpp` files as reusable object files and embeds those objects directly into `reactcpp` and the tests that compile `src/skia_runtime.cpp` directly. Missing submodules are a configure-time error with `git submodule update --init --recursive` guidance.
 
 ### Chart runtime + data source updates
 
@@ -185,6 +187,20 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
 - Introduced chart styling config surface (`ChartStyle`) and theme hooks (`ChartTheme`), including title, axis labels, grid, tick labels/counts, and axis/line colors.
 - Exposed these chart style knobs through DSL fluent chart nodes (`title`, `xlabel`, `ylabel`, `theme`, `tick_count`, `grid`, and related setters), and wired them into render paths in `skia_runtime.cpp`.
 - Demo streaming path now uses `source()` + `push_back` into `VectorDataSource` instead of full-vector replace, with bounded fixed/timeseries retention for charts.
+- Data-source changes request repaint only. When `perform_update_if_needed()` sees a repaint with no hook/state update, it skips `app_render_()` and `reconcile()`, walks the existing Instance tree, checks chart source revisions, marks only changed data-driven nodes dirty, and lets `render_cached_node()` re-record those pictures.
+
+### RivePlayer for SCADA/HMI animations
+
+- Public UI surface:
+  - `reactcpp::RiveInputs` is a thread-safe direct animation input source with `set_number()`, `set_bool()`, and `set_time_scale()`. Each mutation bumps a revision and calls `request_repaint()` without going through hooks or VDOM.
+  - `RivePlayerProps` is a `ViewProps`-derived host prop type with `source`, `artboard`, `state_machine`, optional `inputs_source`, static number/bool inputs, `time_scale`, and `inputs_revision`.
+  - `reactcpp::ui::rive_player()` is the DSL builder entry point.
+- The renderer always loads `.riv` files through `rive::File::import()`, creates the requested/default Artboard and StateMachine, applies `RiveInputs` to `SMINumber`/`SMIBool`, advances by elapsed time multiplied by `time_scale`, and draws through `rive::SkiaRenderer` into the current Skia recording canvas.
+- If loading/importing fails, `RivePlayer` draws a Skia diagnostic card with the error and current input snapshot; this is not a missing-backend fallback.
+- `InstanceNode::native_state` holds the per-node Rive runtime state (`File`, `ArtboardInstance`, `StateMachineInstance`, and timing data), so the `.riv` file is not re-imported on every frame. Rive props changes clear this native state and rebuild it on the next draw.
+- `RivePlayer` participates in the same repaint-only path as charts: `RiveInputs` revision changes mark only the existing `RivePlayer` Instance dirty, clear its cached picture, and avoid app render/reconcile.
+- Continuous Rive animations also stay on the repaint-only path: if the state machine reports that it still needs advance, the renderer requests another repaint, and `refresh_data_driven_nodes()` marks that Rive node dirty without rebuilding the VNode tree.
+- `src/main.cpp` includes a SCADA-style `RivePlayer` demo driven by the same background live-data thread as charts.
 
 ### Font selection for CJK text
 
@@ -327,20 +343,30 @@ request_update sources
   |       -> mark_dirty + request_update()
   |       -> candidate window positioning via SDL_SetTextInputArea()
   |
+  +--> VectorDataSource<T> / RiveInputs
+  |       -> request_repaint()
+  |       -> if no hook update is pending:
+  |          refresh_data_driven_nodes() marks changed chart/Rive nodes dirty
+  |
   +--> Other internal mutations may call request_update() if visual output changes
   |
   v
-SkiaRuntime.update_requested_ = true
+SkiaRuntime frame work is pending
   |
   v
 perform_update_if_needed()
   |
-  +-- if false: return (skip render_frame; no VNodeTree rebuild)
+  +-- if no update and no repaint: return
   |
-  +-- if true : render_frame() -> app_render_() -> reconcile()
+  +-- if update_requested_: render_frame() -> app_render_() -> reconcile()
   |              |
   |              +-- if local_changed || vnode.dirty:
   |                    inst.dirty=true; inst.cached_picture.reset()
+  |
+  +-- else repaint-only: refresh_data_driven_nodes()
+                 |
+                 +-- if source revision changed:
+                       inst.dirty=true; inst.cached_picture.reset()
   v
 draw()
   |

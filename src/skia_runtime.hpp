@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -34,6 +35,66 @@ class DataSourceBase {
 public:
     virtual ~DataSourceBase() = default;
     virtual std::size_t revision() const = 0;
+};
+
+class RiveInputs : public DataSourceBase {
+public:
+    struct Snapshot {
+        std::map<std::string, double> numbers;
+        std::map<std::string, bool> bools;
+        double time_scale{1.0};
+        std::size_t revision{0};
+    };
+
+    std::size_t revision() const override {
+        return revision_.load(std::memory_order_acquire);
+    }
+
+    void set_number(std::string name, double value) {
+        {
+            std::lock_guard lock(mu_);
+            numbers_[std::move(name)] = value;
+        }
+        bump_revision();
+    }
+
+    void set_bool(std::string name, bool value) {
+        {
+            std::lock_guard lock(mu_);
+            bools_[std::move(name)] = value;
+        }
+        bump_revision();
+    }
+
+    void set_time_scale(double value) {
+        {
+            std::lock_guard lock(mu_);
+            time_scale_ = value;
+        }
+        bump_revision();
+    }
+
+    Snapshot snapshot() const {
+        std::lock_guard lock(mu_);
+        return Snapshot{
+            numbers_,
+            bools_,
+            time_scale_,
+            revision_.load(std::memory_order_acquire)
+        };
+    }
+
+private:
+    void bump_revision() {
+        revision_.fetch_add(1, std::memory_order_release);
+        reactcpp::request_repaint();
+    }
+
+    mutable std::mutex mu_;
+    std::map<std::string, double> numbers_;
+    std::map<std::string, bool> bools_;
+    double time_scale_{1.0};
+    std::atomic_size_t revision_{0};
 };
 
 template <typename T>
@@ -712,6 +773,19 @@ struct CanvasProps : ViewProps {
     bool operator==(const CanvasProps&) const = default;
 };
 
+struct RivePlayerProps : ViewProps {
+    std::string source;
+    std::string artboard;
+    std::string state_machine;
+    std::shared_ptr<const reactcpp::RiveInputs> inputs_source;
+    std::map<std::string, double> number_inputs;
+    std::map<std::string, bool> bool_inputs;
+    double time_scale{1.0};
+    std::size_t inputs_revision{0};
+
+    bool operator==(const RivePlayerProps&) const = default;
+};
+
 struct LineChartProps : ViewProps {
     std::shared_ptr<const reactcpp::VectorDataSource<reactcpp::LinePoint>> points_source;
     std::vector<reactcpp::LinePoint> points{};
@@ -895,6 +969,7 @@ using ElementProps = std::variant<
     InputProps,
     InputAreaProps,
     CanvasProps,
+    RivePlayerProps,
     LineChartProps,
     ScatterChartProps,
     AreaChartProps,
@@ -935,16 +1010,18 @@ inline bool props_equal(const ElementProps& lhs, const ElementProps& rhs) {
     case 5:
         return std::get<CanvasProps>(lhs) == std::get<CanvasProps>(rhs);
     case 6:
-        return std::get<LineChartProps>(lhs) == std::get<LineChartProps>(rhs);
+        return std::get<RivePlayerProps>(lhs) == std::get<RivePlayerProps>(rhs);
     case 7:
-        return std::get<ScatterChartProps>(lhs) == std::get<ScatterChartProps>(rhs);
+        return std::get<LineChartProps>(lhs) == std::get<LineChartProps>(rhs);
     case 8:
-        return std::get<AreaChartProps>(lhs) == std::get<AreaChartProps>(rhs);
+        return std::get<ScatterChartProps>(lhs) == std::get<ScatterChartProps>(rhs);
     case 9:
-        return std::get<BarChartProps>(lhs) == std::get<BarChartProps>(rhs);
+        return std::get<AreaChartProps>(lhs) == std::get<AreaChartProps>(rhs);
     case 10:
-        return std::get<CircleChartProps>(lhs) == std::get<CircleChartProps>(rhs);
+        return std::get<BarChartProps>(lhs) == std::get<BarChartProps>(rhs);
     case 11:
+        return std::get<CircleChartProps>(lhs) == std::get<CircleChartProps>(rhs);
+    case 12:
         return std::get<HistogramChartProps>(lhs) == std::get<HistogramChartProps>(rhs);
     default:
         return false;
@@ -957,6 +1034,7 @@ TypeId host_type_text();
 TypeId host_type_input();
 TypeId host_type_input_area();
 TypeId host_type_canvas();
+TypeId host_type_rive_player();
 TypeId host_type_line_chart();
 TypeId host_type_scatter_chart();
 TypeId host_type_area_chart();
@@ -970,6 +1048,7 @@ Element Text(const TextProps& props);
 Element Input(const InputProps& props);
 Element InputArea(const InputAreaProps& props, std::vector<Element> children = {});
 Element Canvas(const CanvasProps& props);
+Element RivePlayer(const RivePlayerProps& props);
 Element LineChart(const LineChartProps& props);
 Element ScatterChart(const ScatterChartProps& props);
 Element AreaChart(const AreaChartProps& props);
@@ -995,6 +1074,7 @@ struct InstanceNode {
     std::vector<HookSlot> hooks;
     bool dirty{true};
     std::shared_ptr<SkPicture> cached_picture;
+    mutable std::shared_ptr<void> native_state;
 
     bool focused{false};
 

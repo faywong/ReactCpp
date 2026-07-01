@@ -163,10 +163,54 @@ static void test_context_menu_copies_selected_text_element() {
     REACTCPP_TEST_ASSERT(found_clipboard);
 }
 
+static void test_data_source_repaint_skips_app_render() {
+    auto points = std::make_shared<reactcpp::VectorDataSource<reactcpp::LinePoint>>(
+        std::vector<reactcpp::LinePoint>{{0.0, 1.0}, {1.0, 2.0}}
+    );
+    int render_count = 0;
+
+    auto app = [&] {
+        ++render_count;
+        ViewProps root;
+        root.style.width = 360.0f;
+        root.style.height = 180.0f;
+
+        LineChartProps chart;
+        chart.style.width = 320.0f;
+        chart.style.height = 140.0f;
+        chart.points_source = points;
+        chart.data_revision = points->revision();
+        chart.show_markers = false;
+
+        return View(root, {LineChart(chart)});
+    };
+
+    SkiaRuntime rt(app, reactcpp::PlatformBridge{}, 360, 180);
+    const reactcpp::Frame first = rt.render_to_frame(360, 180);
+    REACTCPP_TEST_ASSERT(first.picture);
+    REACTCPP_TEST_ASSERT(render_count == 1);
+
+    const InstanceNode& root_before = rt.test_root_instance();
+    REACTCPP_TEST_ASSERT(root_before.children.size() == 1);
+    REACTCPP_TEST_ASSERT(root_before.children[0]->cached_picture);
+    const std::uint32_t chart_picture_id = root_before.children[0]->cached_picture->uniqueID();
+
+    points->push_back({2.0, 3.0});
+    const reactcpp::Frame second = rt.render_to_frame(360, 180);
+    REACTCPP_TEST_ASSERT(second.picture);
+    REACTCPP_TEST_ASSERT(render_count == 1);
+
+    const InstanceNode& root_after = rt.test_root_instance();
+    REACTCPP_TEST_ASSERT(root_after.children.size() == 1);
+    REACTCPP_TEST_ASSERT(root_after.children[0]->cached_picture);
+    REACTCPP_TEST_ASSERT(root_after.children[0]->cached_picture->uniqueID() != chart_picture_id);
+}
+
 int main() {
     test_frame_retains_nested_cached_pictures_across_rerecord();
     test_canvas_drawio_frame_records();
     test_text_uses_intrinsic_width_inside_stretch_parent();
     test_context_menu_copies_selected_text_element();
+    test_data_source_repaint_skips_app_render();
     return 0;
 }
