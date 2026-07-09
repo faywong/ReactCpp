@@ -173,7 +173,7 @@ jobs:
 
       - name: Build runtime library and demo
         run: |
-          cmake --build build --config Release --parallel --target reactcpp reactcpp_demo
+          cmake --build build --config Release --parallel --target reactcpp demo
 
       - name: Pack release artifact
         id: pack
@@ -201,9 +201,9 @@ jobs:
           }
 
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            DEMO_NAME="reactcpp_demo.exe"
+            DEMO_NAME="demo.exe"
           else
-            DEMO_NAME="reactcpp_demo"
+            DEMO_NAME="demo"
           fi
 
           DEMO_PATH="$(find_file "${DEMO_NAME}")"

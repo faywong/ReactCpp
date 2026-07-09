@@ -158,7 +158,7 @@ static sk_sp<SkTypeface> pick_typeface(const sk_sp<SkFontMgr>&);
 static SkColor make_color(float r, float g, float b, float a);
 static void draw_chart_empty_message(SkCanvas* canvas, const DrawContext& ctx, const LayoutRect& plot, const char* text);
 
-struct RivePlayerDrawData {
+struct RiveDrawData {
     reactcpp::RiveInputs::Snapshot inputs;
     std::string error;
     bool rendered{false};
@@ -201,7 +201,7 @@ static RiveRuntimeState* rive_state_for(const InstanceNode& node) {
     return static_cast<RiveRuntimeState*>(node.native_state.get());
 }
 
-static std::shared_ptr<RiveRuntimeState> ensure_rive_state(const InstanceNode& node, const RivePlayerProps& props) {
+static std::shared_ptr<RiveRuntimeState> ensure_rive_state(const InstanceNode& node, const RiveProps& props) {
     auto state = std::static_pointer_cast<RiveRuntimeState>(node.native_state);
     const bool matches = state
         && state->source == props.source
@@ -218,20 +218,20 @@ static std::shared_ptr<RiveRuntimeState> ensure_rive_state(const InstanceNode& n
     node.native_state = state;
 
     if (props.source.empty()) {
-        state->error = "RivePlayer: source is empty";
+        state->error = "Rive: source is empty";
         return state;
     }
 
     std::vector<std::uint8_t> bytes = read_binary_file(props.source);
     if (bytes.empty()) {
-        state->error = "RivePlayer: could not read " + props.source;
+        state->error = "Rive: could not read " + props.source;
         return state;
     }
 
     rive::ImportResult result = rive::ImportResult::malformed;
     state->file = rive::File::import(bytes, &state->factory, &result);
     if (!state->file || result != rive::ImportResult::success) {
-        state->error = "RivePlayer: import failed for " + props.source;
+        state->error = "Rive: import failed for " + props.source;
         return state;
     }
 
@@ -239,7 +239,7 @@ static std::shared_ptr<RiveRuntimeState> ensure_rive_state(const InstanceNode& n
         ? state->file->artboardDefault()
         : state->file->artboardNamed(props.artboard);
     if (!state->artboard) {
-        state->error = "RivePlayer: artboard not found";
+        state->error = "Rive: artboard not found";
         return state;
     }
 
@@ -269,8 +269,8 @@ static std::shared_ptr<RiveRuntimeState> ensure_rive_state(const InstanceNode& n
     return state;
 }
 
-static bool rive_player_wants_repaint(const InstanceNode& node) {
-    if (node.type != host_type_rive_player()) {
+static bool rive_wants_repaint(const InstanceNode& node) {
+    if (node.type != host_type_rive()) {
         return false;
     }
     const auto* state = rive_state_for(node);
@@ -295,14 +295,14 @@ static void apply_rive_inputs(rive::Scene* scene, const reactcpp::RiveInputs::Sn
 
 static bool draw_rive_backend(
     const InstanceNode& node,
-    const RivePlayerProps& props,
+    const RiveProps& props,
     SkCanvas* canvas,
     const LayoutRect& r,
-    RivePlayerDrawData& data
+    RiveDrawData& data
 ) {
     auto state = ensure_rive_state(node, props);
     if (!state || !state->artboard || !state->scene || !state->error.empty()) {
-        data.error = state ? state->error : "RivePlayer: failed to create runtime state";
+        data.error = state ? state->error : "Rive: failed to create runtime state";
         return false;
     }
 
@@ -2761,15 +2761,15 @@ public:
     }
 };
 
-class RivePlayerRenderer final : public ElementRenderer {
+class RiveRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
-        const auto& props = std::get<RivePlayerProps>(node.current_vnode.props);
+        const auto& props = std::get<RiveProps>(node.current_vnode.props);
         const LayoutRect r = layout_for_node(node);
         draw_chart_background(canvas, r, props);
         if (r.width <= 1.0f || r.height <= 1.0f) return;
 
-        RivePlayerDrawData data;
+        RiveDrawData data;
         data.inputs.time_scale = props.time_scale;
         data.inputs.numbers = props.number_inputs;
         data.inputs.bools = props.bool_inputs;
@@ -2802,7 +2802,7 @@ public:
         title_font.setTypeface(pick_typeface(ctx.font_mgr));
         title_font.setSize(18.0f);
 
-        const std::string title = props.source.empty() ? "RivePlayer" : ("RivePlayer: " + props.source);
+        const std::string title = props.source.empty() ? "Rive" : ("Rive: " + props.source);
         canvas->drawString(title.c_str(), 20.0f, 34.0f, title_font, title_paint);
 
         SkPaint text_paint;
@@ -2841,7 +2841,7 @@ static const ElementRenderer& renderer_for(TypeId type) {
     static InputRenderer input_renderer;
     static InputAreaRenderer input_area_renderer;
     static CanvasRenderer canvas_renderer;
-    static RivePlayerRenderer rive_player_renderer;
+    static RiveRenderer rive_renderer;
     static LineChartRenderer line_chart_renderer;
     static ScatterChartRenderer scatter_chart_renderer;
     static AreaChartRenderer area_chart_renderer;
@@ -2855,7 +2855,7 @@ static const ElementRenderer& renderer_for(TypeId type) {
     if (type == host_type_input()) return input_renderer;
     if (type == host_type_input_area()) return input_area_renderer;
     if (type == host_type_canvas()) return canvas_renderer;
-    if (type == host_type_rive_player()) return rive_player_renderer;
+    if (type == host_type_rive()) return rive_renderer;
     if (type == host_type_line_chart()) return line_chart_renderer;
     if (type == host_type_scatter_chart()) return scatter_chart_renderer;
     if (type == host_type_area_chart()) return area_chart_renderer;
@@ -3645,7 +3645,7 @@ private:
                 }
             } else if constexpr (std::is_same_v<P, CanvasProps>) {
                 out += props.drawio_xml;
-            } else if constexpr (std::is_same_v<P, RivePlayerProps>) {
+            } else if constexpr (std::is_same_v<P, RiveProps>) {
                 out += props.source;
             }
         }, node.current_vnode.props);
@@ -4526,7 +4526,7 @@ private:
         if (local_changed || vnode.dirty) {
             inst.dirty = true;
             inst.cached_picture.reset();
-            if (inst.type == host_type_rive_player()) {
+            if (inst.type == host_type_rive()) {
                 inst.native_state.reset();
             }
         }
@@ -4589,7 +4589,7 @@ private:
                         changed = true;
                     }
                 }
-            } else if constexpr (std::is_same_v<P, RivePlayerProps>) {
+            } else if constexpr (std::is_same_v<P, RiveProps>) {
                 if (p.inputs_source) {
                     const std::size_t revision = p.inputs_source->revision();
                     if (p.inputs_revision != revision) {
@@ -4603,7 +4603,7 @@ private:
     }
 
     void refresh_data_driven_nodes(InstanceNode& node) {
-        if (refresh_data_driven_props(node.current_vnode.props) || rive_player_wants_repaint(node)) {
+        if (refresh_data_driven_props(node.current_vnode.props) || rive_wants_repaint(node)) {
             mark_dirty(&node);
         }
         for (auto& child : node.children) {
@@ -4618,12 +4618,26 @@ private:
         return SkRect::MakeXYWH(0.0f, 0.0f, w, h);
     }
 
+    static bool bypass_node_picture_cache(TypeId type) {
+        return type == host_type_rive()
+            || type == host_type_line_chart()
+            || type == host_type_scatter_chart()
+            || type == host_type_area_chart()
+            || type == host_type_bar_chart()
+            || type == host_type_circle_chart()
+            || type == host_type_histogram_chart();
+    }
+
     void render_cached_node(InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) {
         const LayoutRect r = layout_for_node(node);
         canvas->save();
         canvas->translate(r.x, r.y);
 
-        if (node.dirty || !node.cached_picture) {
+        if (bypass_node_picture_cache(node.type)) {
+            node.cached_picture.reset();
+            renderer_for(node.type).on_draw(node, canvas, ctx);
+            node.dirty = false;
+        } else if (node.dirty || !node.cached_picture) {
             SkPictureRecorder recorder;
             const SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, std::max(r.width, 1.0f), std::max(r.height, 1.0f));
             SkCanvas* record_canvas = recorder.beginRecording(bounds);
@@ -4640,7 +4654,9 @@ private:
             node.dirty = false;
         }
 
-        canvas->drawPicture(node.cached_picture.get());
+        if (node.cached_picture) {
+            canvas->drawPicture(node.cached_picture.get());
+        }
         for (auto& child : node.children) {
             render_cached_node(*child, canvas, ctx);
         }
@@ -4724,7 +4740,7 @@ TypeId host_type_canvas() {
     return &dummy;
 }
 
-TypeId host_type_rive_player() {
+TypeId host_type_rive() {
     static int dummy;
     return &dummy;
 }
@@ -4803,9 +4819,9 @@ Element Canvas(const CanvasProps& props) {
     return e;
 }
 
-Element RivePlayer(const RivePlayerProps& props) {
+Element Rive(const RiveProps& props) {
     Element e;
-    e.type = host_type_rive_player();
+    e.type = host_type_rive();
     e.props = props;
     return e;
 }

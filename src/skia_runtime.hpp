@@ -773,7 +773,7 @@ struct CanvasProps : ViewProps {
     bool operator==(const CanvasProps&) const = default;
 };
 
-struct RivePlayerProps : ViewProps {
+struct RiveProps : ViewProps {
     std::string source;
     std::string artboard;
     std::string state_machine;
@@ -783,7 +783,7 @@ struct RivePlayerProps : ViewProps {
     double time_scale{1.0};
     std::size_t inputs_revision{0};
 
-    bool operator==(const RivePlayerProps&) const = default;
+    bool operator==(const RiveProps&) const = default;
 };
 
 struct LineChartProps : ViewProps {
@@ -969,7 +969,7 @@ using ElementProps = std::variant<
     InputProps,
     InputAreaProps,
     CanvasProps,
-    RivePlayerProps,
+    RiveProps,
     LineChartProps,
     ScatterChartProps,
     AreaChartProps,
@@ -1010,7 +1010,7 @@ inline bool props_equal(const ElementProps& lhs, const ElementProps& rhs) {
     case 5:
         return std::get<CanvasProps>(lhs) == std::get<CanvasProps>(rhs);
     case 6:
-        return std::get<RivePlayerProps>(lhs) == std::get<RivePlayerProps>(rhs);
+        return std::get<RiveProps>(lhs) == std::get<RiveProps>(rhs);
     case 7:
         return std::get<LineChartProps>(lhs) == std::get<LineChartProps>(rhs);
     case 8:
@@ -1034,7 +1034,7 @@ TypeId host_type_text();
 TypeId host_type_input();
 TypeId host_type_input_area();
 TypeId host_type_canvas();
-TypeId host_type_rive_player();
+TypeId host_type_rive();
 TypeId host_type_line_chart();
 TypeId host_type_scatter_chart();
 TypeId host_type_area_chart();
@@ -1048,7 +1048,7 @@ Element Text(const TextProps& props);
 Element Input(const InputProps& props);
 Element InputArea(const InputAreaProps& props, std::vector<Element> children = {});
 Element Canvas(const CanvasProps& props);
-Element RivePlayer(const RivePlayerProps& props);
+Element Rive(const RiveProps& props);
 Element LineChart(const LineChartProps& props);
 Element ScatterChart(const ScatterChartProps& props);
 Element AreaChart(const AreaChartProps& props);

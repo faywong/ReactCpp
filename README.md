@@ -17,7 +17,7 @@ ReactCpp is a React-inspired C++20 cross-platform declarative GUI framework in a
 - **Context menu copy**: right-click an element to open a Skia-rendered Copy menu. Copy writes text-like element content to the system clipboard through the platform command queue.
 - **System font selection**: Linux text rendering uses fontconfig-backed Skia font management and chooses a system CJK font for Chinese text.
 - **Draw.io canvas**: `Canvas` renders a raw/uncompressed draw.io `mxGraphModel` subset directly with Skia, including common shapes, labels, waypoints, edge arrows, and shape-boundary connector endpoints.
-- **RivePlayer for SCADA/HMI animation**: `RivePlayer` loads `.riv` files through the embedded `rive-runtime` submodule and renders them through the same Skia renderer path. `RiveInputs` can drive state-machine number/bool inputs and animation speed without going through hooks or virtual-tree reconciliation.
+- **Rive for SCADA/HMI animation**: `Rive` loads `.riv` files through the embedded `rive-runtime` submodule and renders them through the same Skia renderer path. `RiveInputs` can drive state-machine number/bool inputs and animation speed without going through hooks or virtual-tree reconciliation.
 - **Charts components**: `line_chart`, `scatter_chart`, `area_chart`, `bar_chart`, `circle_chart`, and `histogram_chart` render from vector-like data sources and support theme-aware styling, grid/axis options, and live data updates.
 
 ## Runtime rendering pipeline
@@ -27,14 +27,14 @@ ReactCpp uses a retained UI pipeline:
 1. Component functions build a virtual `Element` tree.
 2. `reconcile()` updates the retained `InstanceNode` tree and preserves hook slots where `(type, key/position)` still match.
 3. Yoga computes layout for the retained tree. Measured leaves such as `Text`, `Button`, and `Input` report intrinsic sizes when no explicit size is set.
-4. Dirty instances drop their cached picture. Clean instances keep their previous `SkPicture`.
-5. `render_cached_node()` records only dirty/missing node pictures, draws cached pictures for clean nodes, then draws runtime overlays such as carets, focus rings, and the context menu.
+4. Dirty static instances drop their cached picture. Clean static instances keep their previous `SkPicture`.
+5. `render_cached_node()` records only dirty/missing static node pictures, draws cached pictures for clean static nodes, and directly redraws dynamic Rive/Chart nodes each frame instead of storing their node-level display lists. It then draws runtime overlays such as carets, focus rings, and the context menu.
 
 State updates are intentionally frame-boundary batched. An event handler calls `StateHandle<T>::set()` or `update()`, the setter mutates the hook payload and requests an update, then `perform_update_if_needed()` re-runs the app render function before the next draw. This keeps event handlers non-reentrant while still producing deterministic `state -> render -> reconcile -> dirty pictures -> draw` updates.
 
-High-frequency data sources use a lighter repaint-only path. `VectorDataSource<T>` and `RiveInputs` mutations call `request_repaint()` directly; when no hook/state update is pending, the runtime skips app render and reconciliation, refreshes only data-driven instance props, marks the affected chart/Rive nodes dirty, and re-records only those cached pictures.
+High-frequency data sources use a lighter repaint-only path. `VectorDataSource<T>` and `RiveInputs` mutations call `request_repaint()` directly; when no hook/state update is pending, the runtime skips app render and reconciliation, refreshes only data-driven instance props, marks the affected chart/Rive nodes dirty, and redraws those nodes directly. Rive and chart components intentionally bypass node-level `SkPicture` caching because their visual output is algorithmic or live-data driven.
 
-In Ganesh GL mode, `SkiaRuntime` runs on a worker thread. The SDL main thread drains platform events into `UiEventQueue`, applies `PlatformCommandQueue` operations such as IME area updates and clipboard writes, consumes the latest `FrameMailbox` frame, and presents it to the window backbuffer. A published `Frame` contains a frame-level `SkPicture` plus `retained_pictures`, which keeps strong references to all per-node cached pictures used while recording that frame.
+In Ganesh GL mode, `SkiaRuntime` runs on a worker thread. The SDL main thread drains platform events into `UiEventQueue`, applies `PlatformCommandQueue` operations such as IME area updates and clipboard writes, consumes the latest `FrameMailbox` frame, and presents it to the window backbuffer. A published `Frame` contains a frame-level `SkPicture` plus `retained_pictures`, which keeps strong references to static per-node cached pictures used while recording that frame.
 
 ## Component usage
 
@@ -143,9 +143,9 @@ canvas()
 
 Compressed draw.io `<diagram>` payloads are not inflated yet; pass raw `mxGraphModel` XML for now.
 
-### RivePlayer
+### Rive
 
-`rive_player()` embeds a Rive animation/state machine in the retained Skia runtime. Designers can author the animation and state-machine inputs in Rive, export a `.riv` file, and application code only updates named inputs.
+`rive()` embeds a Rive animation/state machine in the retained Skia runtime. Designers can author the animation and state-machine inputs in Rive, export a `.riv` file, and application code only updates named inputs.
 
 ```cpp
 auto rive_inputs = std::make_shared<reactcpp::RiveInputs>();
@@ -154,7 +154,7 @@ rive_inputs->set_number("temperature", 82.5);
 rive_inputs->set_bool("is_error", false);
 rive_inputs->set_time_scale(1.35);
 
-rive_player()
+rive()
     .size(360.0f, 240.0f)
     .source("assets/boiler.riv")
     .artboard("Boiler")
@@ -162,12 +162,12 @@ rive_player()
     .inputs(rive_inputs);
 ```
 
-`RiveInputs` is thread-safe and designed for SCADA/HMI-style live data. Calling `set_number()`, `set_bool()`, or `set_time_scale()` bumps an input revision and requests a repaint directly; it does not call hooks, does not rebuild the VDOM, and does not re-import the `.riv` file. The retained `RivePlayer` instance applies the latest input snapshot to the Rive scene and redraws through `rive::SkiaRenderer`.
+`RiveInputs` is thread-safe and designed for SCADA/HMI-style live data. Calling `set_number()`, `set_bool()`, or `set_time_scale()` bumps an input revision and requests a repaint directly; it does not call hooks, does not rebuild the VDOM, and does not re-import the `.riv` file. The retained `Rive` instance applies the latest input snapshot to the Rive scene and redraws through `rive::SkiaRenderer`.
 
 Static inputs are also available when values are not streamed:
 
 ```cpp
-rive_player()
+rive()
     .source("assets/valve.riv")
     .state_machine("Valve")
     .number("flow_rate", 42.0)
@@ -282,7 +282,7 @@ Configure:
 ```bash
 git submodule update --init --recursive
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j --target reactcpp_demo
+cmake --build build -j --target demo
 ```
 
 If your SDK lives outside the default `.reactcpp/skia-sdk/<platform>-<arch>`
@@ -299,7 +299,7 @@ skipping the target.
 Run:
 
 ```bash
-./build/reactcpp_demo
+./build/demo
 ```
 
 ## Rendering backend

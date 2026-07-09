@@ -87,6 +87,7 @@ struct LiveChartData {
                 histogram_samples->push_back(hist_noise(rng));
 
                 const double flow_rate = std::fabs(std::sin(t * 0.9)) * 100.0;
+                process_animation->set_number("numLoader", flow_rate);
                 process_animation->set_number("temperature", 68.0 + std::sin(t * 0.33) * 24.0);
                 process_animation->set_number("flow_rate", flow_rate);
                 process_animation->set_bool("is_error", std::fmod(static_cast<double>(tick), 97.0) > 88.0);
@@ -262,16 +263,15 @@ Element AppRoot() {
 
         text()
             .margin(6.0f)
-            .value("Charts powered by VectorDataSource + request_repaint (live)")
+            .value("Rive + charts powered by request_repaint (live)")
             .text_size(18.0f),
 
-        rive_player()
+        rive()
             .margin(6.0f)
             .size(900.0f, 170.0f)
             .bg(1.0f, 1.0f, 1.0f)
-            .source("assets/hmi/boiler_process.riv")
-            .artboard("BoilerProcess")
-            .state_machine("SCADA")
+            .source("assets/rive/coffee_loader.riv")
+            .state_machine("State Machine 1")
             .inputs(charts.process_animation),
 
         line_chart()

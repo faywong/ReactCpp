@@ -57,17 +57,17 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 ## WHERE TO LOOK (TODAY)
 | Task                                    | Location          | Notes |
 |----------------------------------------|-------------------|-------|
-| Project build entry                     | `CMakeLists.txt`  | Builds shared library `reactcpp` and `reactcpp_demo`. Skia is found from `SKIA_SDK_ROOT` or the default `.reactcpp/skia-sdk/<platform>-<arch>` path. Missing Skia is a configure-time error. |
+| Project build entry                     | `CMakeLists.txt`  | Builds shared library `reactcpp` and `demo`. Skia is found from `SKIA_SDK_ROOT` or the default `.reactcpp/skia-sdk/<platform>-<arch>` path. Missing Skia is a configure-time error. |
 | Current demo entry                      | `src/main.cpp`    | Creates a simple element tree and calls `run_skia_app()`. |
 | Declarative UI authoring DSL helpers    | `src/element_dsl.hpp` | Fluent builder DSL under `reactcpp::ui` to make element trees structure-first. |
 | SDL3 + Skia + Yoga runtime              | `src/skia_runtime.*` | SDL3 event loop + Skia rendering + Yoga flexbox layout. |
 | Draw.io canvas component                | `src/skia_runtime.*`, `src/element_dsl.hpp` | `CanvasProps`/`canvas()` render a basic draw.io `mxGraphModel` subset through Skia. |
-| RivePlayer component                    | `src/skia_runtime.*`, `src/element_dsl.hpp` | `RivePlayerProps`/`rive_player()` expose a SCADA/HMI animation host with `RiveInputs` for direct data-driven repaint. |
+| Rive component                    | `src/skia_runtime.*`, `src/element_dsl.hpp` | `RiveProps`/`rive()` expose a SCADA/HMI animation host with `RiveInputs` for direct data-driven repaint. |
 | Legacy console reconciler               | `src/runtime.*`   | Older PoC kept for reference; not used by the SDL/Skia demo. |
 | Skia SDK setup                          | `scripts/skia/setup_skia_sdk.py` | Installs latest CI artifact via `gh` or builds locally. |
 | Skia SDK build internals                | `scripts/skia/build_skia_sdk.py` | Builds/packages the Skia profile into `.reactcpp/skia-sdk/<platform>-<arch>`. |
 | Skia daily CI                           | `.github/workflows/skia-sdk-daily.yml` | Daily/manual Skia SDK artifact builds for Linux, macOS, and Windows. |
-| Release packaging                       | `.github/workflows/release.yml` | CI release pipeline that builds `reactcpp` + `reactcpp_demo`, bundles Skia SDK libs and demo/package assets, and uploads release assets. |
+| Release packaging                       | `.github/workflows/release.yml` | CI release pipeline that builds `reactcpp` + `demo`, bundles Skia SDK libs and demo/package assets, and uploads release assets. |
 
 ### Skia dependency
 
@@ -91,7 +91,7 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
      - Maintain minimal Instance reuse and subtree replacement.
 
 2. **Introduce Skia Rendering (Done)**
-   - `reactcpp_demo` (shared lib + demo binary pipeline):
+   - `demo` (shared lib + demo binary pipeline):
      - Uses SDL3 for window and event loop.
      - Uses a Ganesh GL-backed `SkSurface` by default; if GL init fails, logs a warning and falls back to a CPU raster `SkSurface`.
 
@@ -187,20 +187,22 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
 - Introduced chart styling config surface (`ChartStyle`) and theme hooks (`ChartTheme`), including title, axis labels, grid, tick labels/counts, and axis/line colors.
 - Exposed these chart style knobs through DSL fluent chart nodes (`title`, `xlabel`, `ylabel`, `theme`, `tick_count`, `grid`, and related setters), and wired them into render paths in `skia_runtime.cpp`.
 - Demo streaming path now uses `source()` + `push_back` into `VectorDataSource` instead of full-vector replace, with bounded fixed/timeseries retention for charts.
-- Data-source changes request repaint only. When `perform_update_if_needed()` sees a repaint with no hook/state update, it skips `app_render_()` and `reconcile()`, walks the existing Instance tree, checks chart source revisions, marks only changed data-driven nodes dirty, and lets `render_cached_node()` re-record those pictures.
+- Data-source changes request repaint only. When `perform_update_if_needed()` sees a repaint with no hook/state update, it skips `app_render_()` and `reconcile()`, walks the existing Instance tree, checks chart source revisions, marks only changed data-driven nodes dirty, and lets `render_cached_node()` redraw those dynamic nodes directly.
+- Chart components intentionally bypass node-level `SkPicture` caching. Their plots are algorithmic/live-data driven, so `render_cached_node()` does not record or reuse per-chart display lists; it redraws line/scatter/area/bar/circle/histogram charts into the current frame each time.
 
-### RivePlayer for SCADA/HMI animations
+### Rive for SCADA/HMI animations
 
 - Public UI surface:
   - `reactcpp::RiveInputs` is a thread-safe direct animation input source with `set_number()`, `set_bool()`, and `set_time_scale()`. Each mutation bumps a revision and calls `request_repaint()` without going through hooks or VDOM.
-  - `RivePlayerProps` is a `ViewProps`-derived host prop type with `source`, `artboard`, `state_machine`, optional `inputs_source`, static number/bool inputs, `time_scale`, and `inputs_revision`.
-  - `reactcpp::ui::rive_player()` is the DSL builder entry point.
+  - `RiveProps` is a `ViewProps`-derived host prop type with `source`, `artboard`, `state_machine`, optional `inputs_source`, static number/bool inputs, `time_scale`, and `inputs_revision`.
+  - `reactcpp::ui::rive()` is the DSL builder entry point.
 - The renderer always loads `.riv` files through `rive::File::import()`, creates the requested/default Artboard and StateMachine, applies `RiveInputs` to `SMINumber`/`SMIBool`, advances by elapsed time multiplied by `time_scale`, and draws through `rive::SkiaRenderer` into the current Skia recording canvas.
-- If loading/importing fails, `RivePlayer` draws a Skia diagnostic card with the error and current input snapshot; this is not a missing-backend fallback.
+- If loading/importing fails, `Rive` draws a Skia diagnostic card with the error and current input snapshot; this is not a missing-backend fallback.
 - `InstanceNode::native_state` holds the per-node Rive runtime state (`File`, `ArtboardInstance`, `StateMachineInstance`, and timing data), so the `.riv` file is not re-imported on every frame. Rive props changes clear this native state and rebuild it on the next draw.
-- `RivePlayer` participates in the same repaint-only path as charts: `RiveInputs` revision changes mark only the existing `RivePlayer` Instance dirty, clear its cached picture, and avoid app render/reconcile.
+- `Rive` participates in the same repaint-only path as charts: `RiveInputs` revision changes mark only the existing `Rive` Instance dirty and avoid app render/reconcile.
+- `Rive` intentionally bypasses node-level `SkPicture` caching. Animations, easing/interpolation, and state-machine inputs are redrawn into the current frame rather than recorded into a reusable per-node display list.
 - Continuous Rive animations also stay on the repaint-only path: if the state machine reports that it still needs advance, the renderer requests another repaint, and `refresh_data_driven_nodes()` marks that Rive node dirty without rebuilding the VNode tree.
-- `src/main.cpp` includes a SCADA-style `RivePlayer` demo driven by the same background live-data thread as charts.
+- `src/main.cpp` includes a SCADA-style `Rive` demo driven by the same background live-data thread as charts.
 
 ### Font selection for CJK text
 
@@ -448,3 +450,4 @@ Notes:
 
 ## 代码提交规范
 - 请每次在特性分支/worktree 开发时，收到“提交代码”类请求时，自动将 feat 分支/worktree 合并到 main 分支。
+- `homelab` remote (`https://repo.faywong.cc:5000/faywong/ReactCpp.git`) 是内部商业化版本，优先推送修改；GitHub `origin` 是外部开源影响力版本，特性通常滞后。

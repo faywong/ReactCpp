@@ -86,17 +86,17 @@ if (REACTCPP_BUILD_DEMO)
             WINDOWS_EXPORT_ALL_SYMBOLS ON
     )
 
-    add_executable(reactcpp_demo
+    add_executable(demo
         src/main.cpp
     )
 
-    target_link_libraries(reactcpp_demo PRIVATE reactcpp)
+    target_link_libraries(demo PRIVATE reactcpp)
 
     # Rendering backends:
     # - Ganesh GL is always attempted first and is not user-disableable.
     # - If GL init fails at runtime, we fall back to CPU raster with a loud warning.
     find_package(OpenGL REQUIRED)
-    target_link_libraries(reactcpp_demo PRIVATE OpenGL::GL)
+    target_link_libraries(demo PRIVATE OpenGL::GL)
     target_link_libraries(reactcpp PRIVATE OpenGL::GL)
 
     add_executable(react_cpp_skia_runtime_input_area_enter_tests
@@ -309,7 +309,7 @@ if (REACTCPP_SDL_INCLUDE_DIRS)
             ${REACTCPP_SDL_INCLUDE_DIRS}
     )
 
-    target_include_directories(reactcpp_demo
+    target_include_directories(demo
         PRIVATE
             ${REACTCPP_SDL_INCLUDE_DIRS}
     )
@@ -336,7 +336,7 @@ if (REACTCPP_SDL_CFLAGS_OTHER)
             ${REACTCPP_SDL_CFLAGS_OTHER}
     )
 
-    target_compile_options(reactcpp_demo
+    target_compile_options(demo
         PRIVATE
             ${REACTCPP_SDL_CFLAGS_OTHER}
     )
@@ -363,7 +363,7 @@ if (REACTCPP_SDL_IMPORTED_TARGET)
             ${REACTCPP_SDL_IMPORTED_TARGET}
     )
 
-    target_link_libraries(reactcpp_demo
+    target_link_libraries(demo
         PRIVATE
             ${REACTCPP_SDL_IMPORTED_TARGET}
     )
@@ -388,7 +388,7 @@ else()
             ${REACTCPP_SDL_LIBRARIES}
     )
 
-    target_link_libraries(reactcpp_demo
+    target_link_libraries(demo
         PRIVATE
             ${REACTCPP_SDL_LIBRARIES}
     )
@@ -431,7 +431,7 @@ if (NOT EXISTS "${SKIA_ROOT}/include/core/SkCanvas.h")
     message(FATAL_ERROR "Skia headers not found: expected ${SKIA_ROOT}/include/core/SkCanvas.h")
 endif()
 
-target_include_directories(reactcpp_demo
+target_include_directories(demo
     PRIVATE
         "${SKIA_ROOT}/include"  # for core/SkCanvas.h
         "${SKIA_ROOT}"
@@ -651,7 +651,7 @@ reactcpp_attach_rive_sources(react_cpp_skia_runtime_input_area_enter_tests)
 reactcpp_attach_rive_sources(react_cpp_skia_runtime_frame_retention_tests)
 reactcpp_attach_rive_sources(react_cpp_skia_runtime_ime_area_scroll_tests)
 
-target_link_libraries(reactcpp_demo
+target_link_libraries(demo
     PRIVATE
         "${SKIA_LIB_PATH}"
 )
@@ -678,7 +678,7 @@ target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests
 
 # Some Skia builds require skcms as a separate static lib.
 if (EXISTS "${SKIA_SKCMS_LIB_PATH}")
-    target_link_libraries(reactcpp_demo
+    target_link_libraries(demo
         PRIVATE
             "${SKIA_SKCMS_LIB_PATH}"
     )
@@ -783,7 +783,7 @@ if (PkgConfig_FOUND)
         endif()
 
         if (REACTCPP_FONT_LINK_TARGETS)
-            target_link_libraries(reactcpp_demo PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
+            target_link_libraries(demo PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
             target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
             target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
             target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE ${REACTCPP_FONT_LINK_TARGETS})
@@ -791,14 +791,14 @@ if (PkgConfig_FOUND)
         endif()
 
         if (REACTCPP_FONT_LINK_LIBS)
-            target_link_libraries(reactcpp_demo PRIVATE ${REACTCPP_FONT_LINK_LIBS})
+            target_link_libraries(demo PRIVATE ${REACTCPP_FONT_LINK_LIBS})
             target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE ${REACTCPP_FONT_LINK_LIBS})
             target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE ${REACTCPP_FONT_LINK_LIBS})
             target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE ${REACTCPP_FONT_LINK_LIBS})
             target_link_libraries(reactcpp PRIVATE ${REACTCPP_FONT_LINK_LIBS})
         endif()
 
-        target_include_directories(reactcpp_demo
+        target_include_directories(demo
             PRIVATE
                 ${FREETYPE2_INCLUDE_DIRS}
                 ${FONTCONFIG_INCLUDE_DIRS}
@@ -833,7 +833,7 @@ if (PkgConfig_FOUND)
                 ${HARFBUZZ_INCLUDE_DIRS}
         )
 
-        target_compile_options(reactcpp_demo
+        target_compile_options(demo
             PRIVATE
                 ${FREETYPE2_CFLAGS_OTHER}
                 ${FONTCONFIG_CFLAGS_OTHER}
@@ -868,7 +868,7 @@ if (PkgConfig_FOUND)
                 ${HARFBUZZ_CFLAGS_OTHER}
         )
         list(APPEND REACTCPP_FONT_LINK_LIBS m dl)
-        target_link_libraries(reactcpp_demo PRIVATE m dl)
+        target_link_libraries(demo PRIVATE m dl)
         target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE m dl)
         target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE m dl)
         target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE m dl)
@@ -887,13 +887,13 @@ if (APPLE)
     )
 
     target_link_libraries(reactcpp PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
-    target_link_libraries(reactcpp_demo PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
+    target_link_libraries(demo PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
     target_link_libraries(react_cpp_skia_runtime_input_area_enter_tests PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
     target_link_libraries(react_cpp_skia_runtime_frame_retention_tests PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
     target_link_libraries(react_cpp_skia_runtime_ime_area_scroll_tests PRIVATE ${REACTCPP_APPLE_FRAMEWORK_LINKS})
 endif()
 
-target_link_libraries(reactcpp_demo
+target_link_libraries(demo
     PRIVATE
         Threads::Threads
         yogacore
