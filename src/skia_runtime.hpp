@@ -766,11 +766,11 @@ struct InputAreaProps : ViewProps {
     bool operator==(const InputAreaProps&) const = default;
 };
 
-struct CanvasProps : ViewProps {
+struct DrawioDiagramProps : ViewProps {
     std::string drawio_xml;
     float diagram_padding{16.0f};
 
-    bool operator==(const CanvasProps&) const = default;
+    bool operator==(const DrawioDiagramProps&) const = default;
 };
 
 struct RiveProps : ViewProps {
@@ -968,7 +968,7 @@ using ElementProps = std::variant<
     TextProps,
     InputProps,
     InputAreaProps,
-    CanvasProps,
+    DrawioDiagramProps,
     RiveProps,
     LineChartProps,
     ScatterChartProps,
@@ -1008,7 +1008,7 @@ inline bool props_equal(const ElementProps& lhs, const ElementProps& rhs) {
     case 4:
         return std::get<InputAreaProps>(lhs) == std::get<InputAreaProps>(rhs);
     case 5:
-        return std::get<CanvasProps>(lhs) == std::get<CanvasProps>(rhs);
+        return std::get<DrawioDiagramProps>(lhs) == std::get<DrawioDiagramProps>(rhs);
     case 6:
         return std::get<RiveProps>(lhs) == std::get<RiveProps>(rhs);
     case 7:
@@ -1033,7 +1033,7 @@ TypeId host_type_button();
 TypeId host_type_text();
 TypeId host_type_input();
 TypeId host_type_input_area();
-TypeId host_type_canvas();
+TypeId host_type_drawio_diagram();
 TypeId host_type_rive();
 TypeId host_type_line_chart();
 TypeId host_type_scatter_chart();
@@ -1047,7 +1047,7 @@ Element Button(const ButtonProps& props);
 Element Text(const TextProps& props);
 Element Input(const InputProps& props);
 Element InputArea(const InputAreaProps& props, std::vector<Element> children = {});
-Element Canvas(const CanvasProps& props);
+Element DrawioDiagram(const DrawioDiagramProps& props);
 Element Rive(const RiveProps& props);
 Element LineChart(const LineChartProps& props);
 Element ScatterChart(const ScatterChartProps& props);

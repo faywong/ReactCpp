@@ -3,7 +3,7 @@
 **Generated:** 2026-06-28
 
 ## OVERVIEW
-Small experimental repo for a native reactive GUI framework PoC built in C++20, with Skia (Ganesh OpenGL by default, CPU raster fallback) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
+Small experimental repo for a native reactive GUI, animation, and realtime chart engine PoC built in C++20, with Skia (Ganesh OpenGL by default, CPU raster fallback) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
 
 ## DESIGN GOALS & CONSTRAINTS
 - **Developer experience first**
@@ -61,8 +61,8 @@ Small experimental repo for a native reactive GUI framework PoC built in C++20, 
 | Current demo entry                      | `src/main.cpp`    | Creates a simple element tree and calls `run_skia_app()`. |
 | Declarative UI authoring DSL helpers    | `src/element_dsl.hpp` | Fluent builder DSL under `reactcpp::ui` to make element trees structure-first. |
 | SDL3 + Skia + Yoga runtime              | `src/skia_runtime.*` | SDL3 event loop + Skia rendering + Yoga flexbox layout. |
-| Draw.io canvas component                | `src/skia_runtime.*`, `src/element_dsl.hpp` | `CanvasProps`/`canvas()` render a basic draw.io `mxGraphModel` subset through Skia. |
-| Rive component                    | `src/skia_runtime.*`, `src/element_dsl.hpp` | `RiveProps`/`rive()` expose a SCADA/HMI animation host with `RiveInputs` for direct data-driven repaint. |
+| Draw.io diagram component               | `src/skia_runtime.*`, `src/element_dsl.hpp` | `DrawioDiagramProps`/`drawio_diagram()` render a basic draw.io `mxGraphModel` subset through Skia. |
+| Rive component                    | `src/skia_runtime.*`, `src/element_dsl.hpp` | `RiveProps`/`rive()` expose a Rive animation host with `RiveInputs` for direct data-driven repaint. |
 | Legacy console reconciler               | `src/runtime.*`   | Older PoC kept for reference; not used by the SDL/Skia demo. |
 | Skia SDK setup                          | `scripts/skia/setup_skia_sdk.py` | Installs latest CI artifact via `gh` or builds locally. |
 | Skia SDK build internals                | `scripts/skia/build_skia_sdk.py` | Builds/packages the Skia profile into `.reactcpp/skia-sdk/<platform>-<arch>`. |
@@ -190,7 +190,7 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
 - Data-source changes request repaint only. When `perform_update_if_needed()` sees a repaint with no hook/state update, it skips `app_render_()` and `reconcile()`, walks the existing Instance tree, checks chart source revisions, marks only changed data-driven nodes dirty, and lets `render_cached_node()` redraw those dynamic nodes directly.
 - Chart components intentionally bypass node-level `SkPicture` caching. Their plots are algorithmic/live-data driven, so `render_cached_node()` does not record or reuse per-chart display lists; it redraws line/scatter/area/bar/circle/histogram charts into the current frame each time.
 
-### Rive for SCADA/HMI animations
+### Rive animation
 
 - Public UI surface:
   - `reactcpp::RiveInputs` is a thread-safe direct animation input source with `set_number()`, `set_bool()`, and `set_time_scale()`. Each mutation bumps a revision and calls `request_repaint()` without going through hooks or VDOM.
@@ -202,7 +202,7 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
 - `Rive` participates in the same repaint-only path as charts: `RiveInputs` revision changes mark only the existing `Rive` Instance dirty and avoid app render/reconcile.
 - `Rive` intentionally bypasses node-level `SkPicture` caching. Animations, easing/interpolation, and state-machine inputs are redrawn into the current frame rather than recorded into a reusable per-node display list.
 - Continuous Rive animations also stay on the repaint-only path: if the state machine reports that it still needs advance, the renderer requests another repaint, and `refresh_data_driven_nodes()` marks that Rive node dirty without rebuilding the VNode tree.
-- `src/main.cpp` includes a SCADA-style `Rive` demo driven by the same background live-data thread as charts.
+- `src/main.cpp` includes a realtime-data-driven `Rive` demo driven by the same background live-data thread as charts.
 
 ### Font selection for CJK text
 
@@ -211,17 +211,17 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
 - The matched font file and TTC index are loaded into Skia via `SkFontMgr::makeFromFile()` and reused as the default runtime typeface, so `Text`, `Button`, `Input`, and `InputArea` draw Chinese text with an actual CJK system font instead of the default Latin font's missing-glyph boxes.
 - If fontconfig matching fails, the runtime falls back to Skia's `matchFamilyStyleCharacter()` for character-level system fallback before trying Latin default families.
 
-### Canvas component for draw.io diagrams
+### DrawioDiagram component for draw.io diagrams
 
 - Public UI surface:
-  - `CanvasProps` is a `ViewProps`-derived host prop type with `drawio_xml` and `diagram_padding`.
-  - `reactcpp::ui::canvas()` is the DSL builder entry point.
+  - `DrawioDiagramProps` is a `ViewProps`-derived host prop type with `drawio_xml` and `diagram_padding`.
+  - `reactcpp::ui::drawio_diagram()` is the DSL builder entry point.
 - The first renderer iteration supports uncompressed/raw draw.io `mxGraphModel` XML:
   - Parses common `mxCell` vertices and edges, including edge `mxPoint` waypoints under `mxGeometry`.
   - Renders rectangles, rounded rectangles, ellipses, diamonds/rhombuses, cylinders, swimlanes, image placeholders, wrapped labels, dashed strokes, edge waypoint polylines, and source/target connector arrows through Skia.
-  - Fits the diagram bounds into the Yoga-assigned canvas box while preserving aspect ratio.
+  - Fits the diagram bounds into the Yoga-assigned layout box while preserving aspect ratio.
 - This intentionally does not yet inflate compressed draw.io `<diagram>` payloads; callers should pass raw/uncompressed `mxGraphModel` XML for now.
-- `src/main.cpp` includes a small architecture module diagram demo rendered with `canvas()`.
+- `src/main.cpp` includes a small architecture module diagram demo rendered with `drawio_diagram()`.
 
 ### Context menu copy
 
@@ -231,7 +231,7 @@ The setup script can install a downloaded/daily artifact via `gh`, install a pro
   - `Text`: label text.
   - `Button`: button label.
   - `Input` / `InputArea`: selected text when a selection exists, otherwise the editable value.
-  - `Canvas`: raw draw.io XML.
+  - `DrawioDiagram`: raw draw.io XML.
   - Container nodes aggregate copyable descendant content separated by newlines.
 - Clipboard writes go through `PlatformCommandQueue` (`SetClipboardText`), keeping SDL clipboard access on the platform thread.
 

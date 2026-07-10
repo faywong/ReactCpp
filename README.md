@@ -1,8 +1,8 @@
 # ReactCpp
 
-ReactCpp is a React-inspired C++20 cross-platform declarative GUI framework in alpha. It borrows the core ideas behind [React's component model](https://react.dev/learn/thinking-in-react) and brings them to a native Skia/SDL runtime.
+ReactCpp is a React-inspired C++20 cross-platform declarative GUI, animation, and realtime chart engine in alpha. It borrows the core ideas behind [React's component model](https://react.dev/learn/thinking-in-react) and brings them to a native Skia/SDL runtime.
 
-![ReactCpp demo showing text input, multiline editing, and a draw.io canvas architecture diagram](docs/images/reactcpp-demo.png)
+![ReactCpp demo showing text input, multiline editing, and a draw.io architecture diagram](docs/images/reactcpp-demo.png)
 
 ## Rendering engine features
 
@@ -16,8 +16,8 @@ ReactCpp is a React-inspired C++20 cross-platform declarative GUI framework in a
 - **SDL3 input**: mouse hit testing, click bubbling, focus, IME text input, caret placement, selection, clipboard, undo, multiline editing, and mouse-wheel scrolling are handled in the runtime.
 - **Context menu copy**: right-click an element to open a Skia-rendered Copy menu. Copy writes text-like element content to the system clipboard through the platform command queue.
 - **System font selection**: Linux text rendering uses fontconfig-backed Skia font management and chooses a system CJK font for Chinese text.
-- **Draw.io canvas**: `Canvas` renders a raw/uncompressed draw.io `mxGraphModel` subset directly with Skia, including common shapes, labels, waypoints, edge arrows, and shape-boundary connector endpoints.
-- **Rive for SCADA/HMI animation**: `Rive` loads `.riv` files through the embedded `rive-runtime` submodule and renders them through the same Skia renderer path. `RiveInputs` can drive state-machine number/bool inputs and animation speed without going through hooks or virtual-tree reconciliation.
+- **Draw.io diagram**: `DrawioDiagram` renders a raw/uncompressed draw.io `mxGraphModel` subset directly with Skia, including common shapes, labels, waypoints, edge arrows, and shape-boundary connector endpoints.
+- **Rive animation**: `Rive` loads `.riv` files through the embedded `rive-runtime` submodule and renders them through the same Skia renderer path. `RiveInputs` can drive state-machine number/bool inputs and animation speed without going through hooks or virtual-tree reconciliation.
 - **Charts components**: `line_chart`, `scatter_chart`, `area_chart`, `bar_chart`, `circle_chart`, and `histogram_chart` render from vector-like data sources and support theme-aware styling, grid/axis options, and live data updates.
 
 ## Runtime rendering pipeline
@@ -119,12 +119,12 @@ input_area()
     .value("Line 1\nLine 2: 中文换行测试");
 ```
 
-### Canvas
+### DrawioDiagram
 
-`canvas()` renders a draw.io diagram from raw/uncompressed `mxGraphModel` XML. It supports common `mxCell` vertices and edges, including rectangles, rounded rectangles, ellipses, diamonds/rhombuses, cylinders, swimlanes, image placeholders, wrapped labels, dashed strokes, edge waypoints, source/target connector arrows, and connector endpoints that meet the source/target shape boundary instead of the shape center.
+`drawio_diagram()` renders a draw.io diagram from raw/uncompressed `mxGraphModel` XML. It supports common `mxCell` vertices and edges, including rectangles, rounded rectangles, ellipses, diamonds/rhombuses, cylinders, swimlanes, image placeholders, wrapped labels, dashed strokes, edge waypoints, source/target connector arrows, and connector endpoints that meet the source/target shape boundary instead of the shape center.
 
 ```cpp
-canvas()
+drawio_diagram()
     .size(720.0f, 230.0f)
     .bg(1.0f, 1.0f, 1.0f)
     .diagram_padding(18.0f)
@@ -150,19 +150,19 @@ Compressed draw.io `<diagram>` payloads are not inflated yet; pass raw `mxGraphM
 ```cpp
 auto rive_inputs = std::make_shared<reactcpp::RiveInputs>();
 
-rive_inputs->set_number("temperature", 82.5);
-rive_inputs->set_bool("is_error", false);
+rive_inputs->set_number("progress", 82.5);
+rive_inputs->set_bool("is_active", true);
 rive_inputs->set_time_scale(1.35);
 
 rive()
     .size(360.0f, 240.0f)
-    .source("assets/boiler.riv")
-    .artboard("Boiler")
-    .state_machine("SCADA")
+    .source("assets/loader.riv")
+    .artboard("Loader")
+    .state_machine("Main")
     .inputs(rive_inputs);
 ```
 
-`RiveInputs` is thread-safe and designed for SCADA/HMI-style live data. Calling `set_number()`, `set_bool()`, or `set_time_scale()` bumps an input revision and requests a repaint directly; it does not call hooks, does not rebuild the VDOM, and does not re-import the `.riv` file. The retained `Rive` instance applies the latest input snapshot to the Rive scene and redraws through `rive::SkiaRenderer`.
+`RiveInputs` is thread-safe and designed for realtime animation inputs. Calling `set_number()`, `set_bool()`, or `set_time_scale()` bumps an input revision and requests a repaint directly; it does not call hooks, does not rebuild the VDOM, and does not re-import the `.riv` file. The retained `Rive` instance applies the latest input snapshot to the Rive scene and redraws through `rive::SkiaRenderer`.
 
 Static inputs are also available when values are not streamed:
 
@@ -214,7 +214,7 @@ The runtime includes a small Skia-rendered context menu overlay. Right-click any
 - `Text`: label text
 - `Button`: button label
 - `Input` / `InputArea`: selected text when present, otherwise the current value
-- `Canvas`: raw draw.io XML
+- `DrawioDiagram`: raw draw.io XML
 - containers: copyable descendant content joined with newlines
 
 ## Prerequisites

@@ -62,11 +62,11 @@ static void test_frame_retains_nested_cached_pictures_across_rerecord() {
     }
 }
 
-static void test_canvas_drawio_frame_records() {
-    CanvasProps canvas;
-    canvas.style.width = 320.0f;
-    canvas.style.height = 160.0f;
-    canvas.drawio_xml = R"drawio(
+static void test_drawio_diagram_frame_records() {
+    DrawioDiagramProps diagram;
+    diagram.style.width = 320.0f;
+    diagram.style.height = 160.0f;
+    diagram.drawio_xml = R"drawio(
 <mxGraphModel>
   <root>
     <mxCell id="0"/>
@@ -88,7 +88,7 @@ static void test_canvas_drawio_frame_records() {
         ViewProps root;
         root.style.width = 340.0f;
         root.style.height = 180.0f;
-        return View(root, {Canvas(canvas)});
+        return View(root, {DrawioDiagram(diagram)});
     };
 
     SkiaRuntime rt(app, reactcpp::PlatformBridge{}, 800, 600);
@@ -192,8 +192,7 @@ static void test_data_source_repaint_skips_app_render() {
 
     const InstanceNode& root_before = rt.test_root_instance();
     REACTCPP_TEST_ASSERT(root_before.children.size() == 1);
-    REACTCPP_TEST_ASSERT(root_before.children[0]->cached_picture);
-    const std::uint32_t chart_picture_id = root_before.children[0]->cached_picture->uniqueID();
+    REACTCPP_TEST_ASSERT(!root_before.children[0]->cached_picture);
 
     points->push_back({2.0, 3.0});
     const reactcpp::Frame second = rt.render_to_frame(360, 180);
@@ -202,13 +201,14 @@ static void test_data_source_repaint_skips_app_render() {
 
     const InstanceNode& root_after = rt.test_root_instance();
     REACTCPP_TEST_ASSERT(root_after.children.size() == 1);
-    REACTCPP_TEST_ASSERT(root_after.children[0]->cached_picture);
-    REACTCPP_TEST_ASSERT(root_after.children[0]->cached_picture->uniqueID() != chart_picture_id);
+    REACTCPP_TEST_ASSERT(!root_after.children[0]->cached_picture);
+    const auto& chart = std::get<LineChartProps>(root_after.children[0]->current_vnode.props);
+    REACTCPP_TEST_ASSERT(chart.data_revision == points->revision());
 }
 
 int main() {
     test_frame_retains_nested_cached_pictures_across_rerecord();
-    test_canvas_drawio_frame_records();
+    test_drawio_diagram_frame_records();
     test_text_uses_intrinsic_width_inside_stretch_parent();
     test_context_menu_copies_selected_text_element();
     test_data_source_repaint_skips_app_render();

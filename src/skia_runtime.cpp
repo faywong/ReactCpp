@@ -1123,7 +1123,7 @@ struct DrawioCell {
     std::vector<SkPoint> points;
 };
 
-struct DrawioDiagram {
+struct ParsedDrawioDiagram {
     std::vector<DrawioCell> cells;
 };
 
@@ -1272,9 +1272,9 @@ static std::string extract_drawio_model_xml(std::string_view xml) {
     return std::string(xml);
 }
 
-static DrawioDiagram parse_drawio_diagram(std::string_view xml_input) {
+static ParsedDrawioDiagram parse_drawio_diagram(std::string_view xml_input) {
     const std::string xml = extract_drawio_model_xml(xml_input);
-    DrawioDiagram diagram;
+    ParsedDrawioDiagram diagram;
 
     std::size_t pos = 0;
     while ((pos = xml.find("<mxCell", pos)) != std::string::npos) {
@@ -1442,10 +1442,10 @@ public:
     }
 };
 
-class CanvasRenderer final : public ElementRenderer {
+class DrawioDiagramRenderer final : public ElementRenderer {
 public:
     void on_draw(const InstanceNode& node, SkCanvas* canvas, const DrawContext& ctx) const override {
-        const auto& props = std::get<CanvasProps>(node.current_vnode.props);
+        const auto& props = std::get<DrawioDiagramProps>(node.current_vnode.props);
         const LayoutRect r = layout_for_node(node);
 
         const SkRect bounds = SkRect::MakeXYWH(0.0f, 0.0f, r.width, r.height);
@@ -1454,7 +1454,7 @@ public:
         fill.setColor(make_color(props.bg_r, props.bg_g, props.bg_b, props.bg_a));
         canvas->drawRect(bounds, fill);
 
-        const DrawioDiagram diagram = parse_drawio_diagram(props.drawio_xml);
+        const ParsedDrawioDiagram diagram = parse_drawio_diagram(props.drawio_xml);
         if (diagram.cells.empty()) {
             draw_empty_message(canvas, ctx, bounds);
             return;
@@ -2840,7 +2840,7 @@ static const ElementRenderer& renderer_for(TypeId type) {
     static TextRenderer text_renderer;
     static InputRenderer input_renderer;
     static InputAreaRenderer input_area_renderer;
-    static CanvasRenderer canvas_renderer;
+    static DrawioDiagramRenderer drawio_diagram_renderer;
     static RiveRenderer rive_renderer;
     static LineChartRenderer line_chart_renderer;
     static ScatterChartRenderer scatter_chart_renderer;
@@ -2854,7 +2854,7 @@ static const ElementRenderer& renderer_for(TypeId type) {
     if (type == host_type_text()) return text_renderer;
     if (type == host_type_input()) return input_renderer;
     if (type == host_type_input_area()) return input_area_renderer;
-    if (type == host_type_canvas()) return canvas_renderer;
+    if (type == host_type_drawio_diagram()) return drawio_diagram_renderer;
     if (type == host_type_rive()) return rive_renderer;
     if (type == host_type_line_chart()) return line_chart_renderer;
     if (type == host_type_scatter_chart()) return scatter_chart_renderer;
@@ -3643,7 +3643,7 @@ private:
                 } else {
                     out += props.value;
                 }
-            } else if constexpr (std::is_same_v<P, CanvasProps>) {
+            } else if constexpr (std::is_same_v<P, DrawioDiagramProps>) {
                 out += props.drawio_xml;
             } else if constexpr (std::is_same_v<P, RiveProps>) {
                 out += props.source;
@@ -4735,7 +4735,7 @@ TypeId host_type_input_area() {
     return &dummy;
 }
 
-TypeId host_type_canvas() {
+TypeId host_type_drawio_diagram() {
     static int dummy;
     return &dummy;
 }
@@ -4812,9 +4812,9 @@ Element InputArea(const InputAreaProps& props, std::vector<Element> children) {
     return e;
 }
 
-Element Canvas(const CanvasProps& props) {
+Element DrawioDiagram(const DrawioDiagramProps& props) {
     Element e;
-    e.type = host_type_canvas();
+    e.type = host_type_drawio_diagram();
     e.props = props;
     return e;
 }

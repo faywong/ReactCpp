@@ -365,10 +365,10 @@ Element AppRoot() {
 
         text()
             .margin(6.0f)
-            .value("Draw.io architecture canvas:")
+            .value("Draw.io architecture diagram:")
             .text_size(18.0f),
 
-        canvas()
+        drawio_diagram()
             .margin(6.0f)
             .size(900.0f, 330.0f)
             .bg(1.0f, 1.0f, 1.0f)

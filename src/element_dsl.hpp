@@ -679,31 +679,31 @@ private:
     std::vector<Element> children_{};
 };
 
-class CanvasNode final : public ViewLikeNode<CanvasNode, CanvasProps> {
+class DrawioDiagramNode final : public ViewLikeNode<DrawioDiagramNode, DrawioDiagramProps> {
 public:
-    CanvasNode& drawio_xml(std::string v) & {
+    DrawioDiagramNode& drawio_xml(std::string v) & {
         props_.drawio_xml = std::move(v);
         return *this;
     }
-    CanvasNode&& drawio_xml(std::string v) && {
+    DrawioDiagramNode&& drawio_xml(std::string v) && {
         props_.drawio_xml = std::move(v);
         return std::move(*this);
     }
 
-    CanvasNode& diagram_padding(float v) & {
+    DrawioDiagramNode& diagram_padding(float v) & {
         props_.diagram_padding = v;
         return *this;
     }
-    CanvasNode&& diagram_padding(float v) && {
+    DrawioDiagramNode&& diagram_padding(float v) && {
         props_.diagram_padding = v;
         return std::move(*this);
     }
 
     Element build() const & {
-        return Canvas(props_);
+        return DrawioDiagram(props_);
     }
     Element build() && {
-        return Canvas(props_);
+        return DrawioDiagram(props_);
     }
     operator Element() && {
         return std::move(*this).build();
@@ -1432,8 +1432,8 @@ inline InputAreaNode input_area() {
     return InputAreaNode{};
 }
 
-inline CanvasNode canvas() {
-    return CanvasNode{};
+inline DrawioDiagramNode drawio_diagram() {
+    return DrawioDiagramNode{};
 }
 
 inline RiveNode rive() {
