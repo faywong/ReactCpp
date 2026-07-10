@@ -24,6 +24,8 @@ ReactCpp is a React-inspired C++20 cross-platform declarative GUI, animation, an
 
 ReactCpp uses a retained UI pipeline:
 
+![ReactCpp runtime rendering pipeline](docs/images/runtime-rendering-pipeline.drawio.svg)
+
 1. Component functions build a virtual `Element` tree.
 2. `reconcile()` updates the retained `InstanceNode` tree and preserves hook slots where `(type, key/position)` still match.
 3. Yoga computes layout for the retained tree. Measured leaves such as `Text`, `Button`, and `Input` report intrinsic sizes when no explicit size is set.
