@@ -3,7 +3,7 @@
 **Generated:** 2026-06-28
 
 ## OVERVIEW
-Small experimental repo for a native reactive GUI, animation, and realtime chart engine PoC built in C++20, with Skia (Ganesh OpenGL by default, CPU raster fallback) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
+ReactCpp GUI is a cross-platform UI framework that unifies GUI, charts, animation, and game rendering. It is built in C++20 with Skia (Ganesh OpenGL by default, CPU raster fallback) and SDL3 as the windowing backend. The design goal is a React/Revery-style declarative UI model with hooks, Virtual/Instance trees, and SkPicture-based rendering caches.
 
 ## DESIGN GOALS & CONSTRAINTS
 - **Developer experience first**
@@ -450,4 +450,4 @@ Notes:
 
 ## 代码提交规范
 - 请每次在特性分支/worktree 开发时，收到“提交代码”类请求时，自动将 feat 分支/worktree 合并到 main 分支。
-- `homelab` remote (`https://repo.faywong.cc:5000/faywong/ReactCpp.git`) 是内部商业化版本，优先推送修改；GitHub `origin` 是外部开源影响力版本，特性通常滞后。
+- `origin` remote (`https://repo.faywong.cc:5000/faywong/ReactCpp.git`) 是内部商业化版本，优先推送修改；`github` remote (`git@github.com:faywong/ReactCpp.git`) 是外部开源影响力版本，特性通常滞后。

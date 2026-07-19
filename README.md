@@ -1,6 +1,8 @@
 # ReactCpp
 
-ReactCpp is a React-inspired C++20 cross-platform declarative GUI, animation, and realtime chart engine in alpha. It borrows the core ideas behind [React's component model](https://react.dev/learn/thinking-in-react) and brings them to a native Skia/SDL runtime.
+**产品定位：ReactCpp GUI：统一 GUI、图表、动画、游戏渲染的跨平台 UI 框架。**
+
+ReactCpp GUI is a cross-platform UI framework that unifies GUI, charts, animation, and game rendering. It uses a React-inspired C++20 declarative component model on a native Skia/SDL runtime.
 
 <video src="docs/images/reactcpp-demo.webm" controls muted loop playsinline title="ReactCpp demo showing text input, multiline editing, and a draw.io architecture diagram"></video>
 
