@@ -4,7 +4,9 @@
 
 ReactCpp GUI is a cross-platform UI framework that unifies GUI, charts, animation, and game rendering. It uses a React-inspired C++20 declarative component model on a native Skia/SDL runtime.
 
-<video src="docs/images/reactcpp-demo.webm" controls muted loop playsinline title="ReactCpp demo showing text input, multiline editing, and a draw.io architecture diagram"></video>
+[![ReactCpp demo showing text input, multiline editing, and a draw.io architecture diagram](docs/images/reactcpp-demo.png)](docs/images/reactcpp-demo.webm)
+
+[Watch the full demo video (WebM)](docs/images/reactcpp-demo.webm)
 
 ## Rendering engine features
 
