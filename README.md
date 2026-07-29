@@ -1,6 +1,6 @@
 # ReactCpp
 
-**产品定位：ReactCpp GUI：统一 GUI、图表、动画、游戏渲染的跨平台 UI 框架。**
+**融合 GUI 与实时游戏、动画、图表渲染的跨端 C++/React GUI 框架。**
 
 ReactCpp GUI is a cross-platform UI framework that unifies GUI, charts, animation, and game rendering. It uses a React-inspired C++20 declarative component model on a native Skia/SDL runtime.
 
